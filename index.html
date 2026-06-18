@@ -1,0 +1,2203 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>GRID NAVI BATTLE V15</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body {
+    width:100%; height:100%; overflow:hidden;
+    background:#06070e;
+    font-family:'Courier New', monospace;
+    color:#cfe;
+    touch-action:none; user-select:none; -webkit-user-select:none;
+    display:flex; align-items:center; justify-content:center;
+  }
+  #stage { display:flex; flex-direction:column; align-items:center; gap:8px; position:relative; }
+  #topbar { width:100%; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  #topbar button {
+    background:rgba(10,18,32,0.82); border:1px solid #2f4a72; color:#bfe3ff; border-radius:6px;
+    font-family:inherit; font-weight:bold; font-size:11px; padding:5px 8px; cursor:pointer; touch-action:none;
+  }
+  #topbar button:active { background:#2e69b0; color:#fff; }
+  #mute { margin-left:auto; }
+  #game {
+    image-rendering:pixelated; image-rendering:crisp-edges;
+    background:#04050a;
+    border:2px solid #1b2b44;
+    box-shadow:0 0 26px rgba(40,120,200,0.28);
+    display:block;
+  }
+  #pad { width:100%; display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .cluster { display:flex; }
+  .dpad { display:grid; grid-template-columns:repeat(3, 54px); grid-template-rows:repeat(3, 54px); gap:3px; }
+  .btn {
+    background:#16243c; border:1px solid #2f4a72; color:#bfe3ff; border-radius:7px;
+    font-family:inherit; font-weight:bold; font-size:14px;
+    display:flex; align-items:center; justify-content:center; cursor:pointer; touch-action:none;
+    transition:background .05s;
+  }
+  .btn:active, .btn.on { background:#2e69b0; color:#fff; }
+  .dpad .btn { width:54px; height:54px; font-size:22px; }
+  .dpad .empty { visibility:hidden; }
+  .acts { display:flex; gap:8px; align-items:flex-end; }
+  .abtn { width:62px; height:62px; border-radius:50%; font-size:16px; flex-direction:column; }
+  .abtn small { font-size:9px; opacity:.7; }
+  .abtn.cust { width:58px; height:58px; background:#3a2a4e; border-color:#6a4a8a; color:#e6c8ff; }
+  .abtn.cust:active { background:#7a4ab0; }
+  .abtn.chip { background:#143a30; border-color:#2f7a5a; color:#bfffe0; }
+  .abtn.chip:active { background:#2aa070; }
+  .hint { font-size:11px; color:#5a7090; text-align:center; margin-top:2px; letter-spacing:.5px; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="topbar">
+    <button id="fxbtn" type="button">FX:ON</button>
+    <button id="shakebtn" type="button">SHAKE:STRONG</button>
+    <button id="mute" type="button">BGM: ON</button>
+  </div>
+  <canvas id="game" width="384" height="232"></canvas>
+  <div id="pad">
+    <div class="cluster">
+      <div class="dpad">
+        <div class="empty"></div><div class="btn" data-dir="up">▲</div><div class="empty"></div>
+        <div class="btn" data-dir="left">◀</div><div class="empty"></div><div class="btn" data-dir="right">▶</div>
+        <div class="empty"></div><div class="btn" data-dir="down">▼</div><div class="empty"></div>
+      </div>
+    </div>
+    <div class="cluster acts">
+      <div class="btn abtn cust" data-act="cust">CUST<small>カスタム</small></div>
+      <div class="btn abtn chip" data-act="chip">CHIP<small>使用</small></div>
+      <div class="btn abtn" data-act="buster">B<small>ショット</small></div>
+    </div>
+  </div>
+  <div class="hint">PC: 移動=方向/WASD ・ ショット=Z ・ チップ=X ・ カスタム=C</div>
+</div>
+
+<script>
+"use strict";
+(function(){
+
+const cv = document.getElementById('game');
+const ctx = cv.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+const VW = 384, VH = 232;
+let RS = 1;                       // 内部レンダースケール（論理1px→バッキングRS px）。視認性向上の要。
+const COLS = 6, ROWS = 3;
+const PLAYER_COLS = 3;
+
+/* ============================ レスポンシブ ============================ */
+function fitCanvas(){
+  const pad = document.getElementById('pad');
+  const padH = 176;
+  const availW = Math.max(200, window.innerWidth - 16);
+  const topH = 40;                                     // 上部設定バー(FX/SHAKE/BGM)の高さ確保
+  const availH = Math.max(200, window.innerHeight - padH - topH - 24);
+  let disp = Math.floor(Math.min(availW / VW, availH / VH));
+  disp = Math.max(1, Math.min(6, disp));               // 画面表示の整数倍率（従来どおり）
+  const dpr = window.devicePixelRatio || 1;
+  const dprMul = dpr >= 1.5 ? 2 : 1;                   // 高精細ディスプレイでは内部解像度を更に2倍
+  RS = disp * dprMul;                                  // 論理→内部の拡大率（描画は論理座標のまま行う）
+  cv.width  = Math.round(VW * RS);                     // バッキングストアを高解像度化＝にじみ解消
+  cv.height = Math.round(VH * RS);
+  cv.style.width  = (VW * disp) + 'px';                // 表示サイズは従来と同一（当たり判定・座標系は不変）
+  cv.style.height = (VH * disp) + 'px';
+  pad.style.maxWidth = (VW * disp) + 'px';
+  const tb=document.getElementById('topbar'); if(tb) tb.style.maxWidth = (VW * disp) + 'px';
+  ctx.imageSmoothingEnabled = false;                   // canvasリサイズで解除されるため毎回再設定
+}
+window.addEventListener('resize', fitCanvas);
+
+/* ============================ ユーティリティ ============================ */
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const lerp=(a,b,t)=>a+(b-a)*t;
+const rint=(a,b)=>a+Math.floor(Math.random()*(b-a+1));
+const choice=a=>a[Math.floor(Math.random()*a.length)];
+function shuffle(arr){const a=arr.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
+function nowS(){ return performance.now()/1000; }
+
+/* ============================ ビットマップフォント(5x7) ============================ */
+/* '#'=点灯, '.'=消灯。各行5文字。typoがあっても normGlyph で5文字に整形（致命傷回避）。*/
+const RAW = {
+ ' ':['.....','.....','.....','.....','.....','.....','.....'],
+ '0':['.###.','#...#','#..##','#.#.#','##..#','#...#','.###.'],
+ '1':['..#..','.##..','..#..','..#..','..#..','..#..','.###.'],
+ '2':['.###.','#...#','....#','...#.','..#..','.#...','#####'],
+ '3':['#####','...#.','..#..','...#.','....#','#...#','.###.'],
+ '4':['...#.','..##.','.#.#.','#..#.','#####','...#.','...#.'],
+ '5':['#####','#....','####.','....#','....#','#...#','.###.'],
+ '6':['..##.','.#...','#....','####.','#...#','#...#','.###.'],
+ '7':['#####','....#','...#.','..#..','.#...','.#...','.#...'],
+ '8':['.###.','#...#','#...#','.###.','#...#','#...#','.###.'],
+ '9':['.###.','#...#','#...#','.####','....#','...#.','.##..'],
+ 'A':['.###.','#...#','#...#','#####','#...#','#...#','#...#'],
+ 'B':['####.','#...#','#...#','####.','#...#','#...#','####.'],
+ 'C':['.###.','#...#','#....','#....','#....','#...#','.###.'],
+ 'D':['####.','#...#','#...#','#...#','#...#','#...#','####.'],
+ 'E':['#####','#....','#....','####.','#....','#....','#####'],
+ 'F':['#####','#....','#....','####.','#....','#....','#....'],
+ 'G':['.###.','#...#','#....','#.###','#...#','#...#','.###.'],
+ 'H':['#...#','#...#','#...#','#####','#...#','#...#','#...#'],
+ 'I':['.###.','..#..','..#..','..#..','..#..','..#..','.###.'],
+ 'J':['..###','...#.','...#.','...#.','...#.','#..#.','.##..'],
+ 'K':['#...#','#..#.','#.#..','##...','#.#..','#..#.','#...#'],
+ 'L':['#....','#....','#....','#....','#....','#....','#####'],
+ 'M':['#...#','##.##','#.#.#','#.#.#','#...#','#...#','#...#'],
+ 'N':['#...#','##..#','#.#.#','#.#.#','#..##','#...#','#...#'],
+ 'O':['.###.','#...#','#...#','#...#','#...#','#...#','.###.'],
+ 'P':['####.','#...#','#...#','####.','#....','#....','#....'],
+ 'Q':['.###.','#...#','#...#','#...#','#.#.#','#..#.','.##.#'],
+ 'R':['####.','#...#','#...#','####.','#.#..','#..#.','#...#'],
+ 'S':['.####','#....','#....','.###.','....#','....#','####.'],
+ 'T':['#####','..#..','..#..','..#..','..#..','..#..','..#..'],
+ 'U':['#...#','#...#','#...#','#...#','#...#','#...#','.###.'],
+ 'V':['#...#','#...#','#...#','#...#','#...#','.#.#.','..#..'],
+ 'W':['#...#','#...#','#...#','#.#.#','#.#.#','##.##','#...#'],
+ 'X':['#...#','#...#','.#.#.','..#..','.#.#.','#...#','#...#'],
+ 'Y':['#...#','#...#','.#.#.','..#..','..#..','..#..','..#..'],
+ 'Z':['#####','....#','...#.','..#..','.#...','#....','#####'],
+ '/':['....#','....#','...#.','..#..','.#...','#....','#....'],
+ ':':['.....','..#..','..#..','.....','..#..','..#..','.....'],
+ '!':['..#..','..#..','..#..','..#..','..#..','.....','..#..'],
+ '+':['.....','..#..','..#..','#####','..#..','..#..','.....'],
+ '-':['.....','.....','.....','#####','.....','.....','.....'],
+ '.':['.....','.....','.....','.....','.....','.##..','.##..'],
+ '%':['##..#','##..#','...#.','..#..','.#...','#..##','#..##'],
+ '*':['.....','#.#.#','.###.','#####','.###.','#.#.#','.....'],
+ '(':['...#.','..#..','.#...','.#...','.#...','..#..','...#.'],
+ ')':['.#...','..#..','...#.','...#.','...#.','..#..','.#...'],
+ '[':['.###.','.#...','.#...','.#...','.#...','.#...','.###.'],
+ ']':['.###.','...#.','...#.','...#.','...#.','...#.','.###.'],
+ '<':['...#.','..#..','.#...','#....','.#...','..#..','...#.'],
+ '>':['#....','.#...','..#..','...#.','..#..','.#...','#....'],
+ '?':['.###.','#...#','....#','...#.','..#..','.....','..#..']
+};
+const GLYPH = {};
+(function buildFont(){
+  for (const k in RAW){
+    GLYPH[k] = RAW[k].map(r => (r + '.....').slice(0,5));
+  }
+})();
+function bsnap(v){ return Math.round(v*RS)/RS; }   // 内部解像度グリッドへ吸着＝デバイス整数画素に整列（にじみ/潰れ防止）
+function btext(str, x, y, scale, color, align, shadow){
+  str = (''+str).toUpperCase();
+  const cw=5, gap=1, adv=(cw+gap)*scale;
+  const width = str.length*adv - gap*scale;
+  let sx0 = x;
+  if (align==='center') sx0 = x - width/2;
+  else if (align==='right') sx0 = x - width;
+  const blk = Math.max(1/RS, Math.round(scale*RS)/RS);   // ドット1個のサイズを内部解像度の整数画素に丸める
+  if (shadow){
+    ctx.fillStyle = '#000';
+    let sx = sx0;
+    for (let n=0;n<str.length;n++){
+      const g = GLYPH[str[n]] || GLYPH['?'];
+      for (let r=0;r<7;r++){ const row=g[r];
+        for (let i=0;i<5;i++){ if(row[i]==='#'){ ctx.fillRect(bsnap(sx+i*scale+scale), bsnap(y+r*scale+scale), blk, blk); } }
+      }
+      sx += adv;
+    }
+  }
+  ctx.fillStyle = color;
+  let sx = sx0;
+  for (let n=0;n<str.length;n++){
+    const g = GLYPH[str[n]] || GLYPH['?'];
+    for (let r=0;r<7;r++){ const row=g[r];
+      for (let i=0;i<5;i++){ if(row[i]==='#'){ ctx.fillRect(bsnap(sx+i*scale), bsnap(y+r*scale), blk, blk); } }
+    }
+    sx += adv;
+  }
+}
+function btextWidth(str,scale){ return (''+str).length*((5+1)*scale) - 1*scale; }
+/* 日本語など非ASCII用。実フォント(ゴシック体)＋高解像度バッキングで鮮明描画 */
+const JP_FONT = '"Hiragino Kaku Gothic ProN","Yu Gothic UI","Yu Gothic","Meiryo","Noto Sans CJK JP","MS PGothic",sans-serif';
+function jtext(str,x,y,col,size,align,weight){
+  const sz=size||9;
+  ctx.font=(weight?weight+' ':'')+sz+'px '+JP_FONT;
+  ctx.textAlign=align||'left'; ctx.textBaseline='alphabetic';
+  ctx.fillStyle='#04060c'; ctx.fillText(str,x+0.6,y+0.7);   // 細い影で背景から分離し可読性を確保
+  ctx.fillStyle=col||'#cfe'; ctx.fillText(str,x,y);
+  ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+}
+
+/* ============================ バランス定数 ============================ */
+const PLAYER = { maxHp:200, moveCd:0.11, iframe:0.6 };
+const BUSTER = { dmg:8, cd:0.13, vx:13 };
+const CHARGE = { time:1.0, dmg:45, vx:16 };
+const CUSTOM_FILL = 9.5;
+const CHIP_USE_CD = 0.24;
+const CHAIN_WINDOW = 1.3; // 撃破チェインの猶予(秒)
+
+const ENEMY_DEF = {
+  crawler:{ name:'SHADOW CRAWLER', jp:'シャドウクロウラー', hp:36, col:'#9a5cff' },
+  turret :{ name:'TURRET CORE',    jp:'タレットコア',       hp:56, col:'#c8c8d0' },
+  blade  :{ name:'BLADE BOT',      jp:'ブレードボット',     hp:48, col:'#46d06a' },
+  mortar :{ name:'MORTAR NODE',    jp:'モルタルノード',     hp:46, col:'#ff9a3c' },
+  boss   :{ name:'INFERNO',        jp:'インフェルノ',       hp:300,col:'#ff5a3c' },
+  omega  :{ name:'OMEGA',          jp:'オメガ',             hp:360,col:'#a86aff' }  // EXボス(列ロック軸)
+};
+function isBossType(t){ return t==='boss'||t==='omega'; }
+function liveBoss(){ return G.enemies.find(e=>isBossType(e.type)&&!e.dead)||null; } // 現在生存中のボス(なければnull)
+const EDMG = { shock:15, cannon:20, slash:22, bomb:20, flame:24, meteor:22, cross:28 };
+const EVX  = { shock:6, cannon:7 };
+const TOTAL_WAVES = 4; // 通常: 1-3=ウェーブ, 4=ボス(INFERNO) / EXモード: +5=EXボス(OMEGA)
+
+/* ============================ 難易度 ============================ */
+/* hp:体力倍率 / aggro:AIクールダウン倍率(大=遅い) / vx:敵弾速倍率 / warn:予告猶予倍率(大=長い) /
+   meteor:ボス流星の追加数 / bossHp:ボス体力倍率。どの難易度でも安全マスは必ず1つ以上残す。 */
+const DIFFS = {
+  EASY:   { key:'EASY',   name:'EASY',   jp:'ひかえめ',  hp:0.8,  aggro:1.30, vx:0.85, warn:1.35, meteor:-1, bossHp:0.80, dmg:0.85 },
+  NORMAL: { key:'NORMAL', name:'NORMAL', jp:'ふつう',    hp:1.0,  aggro:1.00, vx:1.00, warn:1.00, meteor:0,  bossHp:1.00, dmg:1.00 },
+  HARD:   { key:'HARD',   name:'HARD',   jp:'ハード',    hp:1.25, aggro:0.80, vx:1.15, warn:0.82, meteor:1,  bossHp:1.30, dmg:1.15 }
+};
+const DIFF_ORDER=['EASY','NORMAL','HARD'];
+let DIFF = DIFFS.NORMAL;
+function ewarn(w){ return w*DIFF.warn; }      // 敵予告の猶予
+function evx(v){ return v*DIFF.vx; }          // 敵弾速
+function edmg(v){ return Math.round(v*DIFF.dmg); } // 敵ダメージ
+
+/* ============================ チップ定義(12種・全オリジナル) ============================ */
+const CHIPS = {
+  PULSE   :{ id:'PULSE',   jp:'パルスショット',   dmg:20, cat:'shot',  col:'#ffd23c', desc:'自機の行を直進する弾', src:'初期フォルダ' },
+  RAPID   :{ id:'RAPID',   jp:'ラピッドファイア', dmg:4, hits:8, cat:'shot', col:'#ffe88a', desc:'行に連射する弱弾×8', src:'初期フォルダ' },
+  BLADE   :{ id:'BLADE',   jp:'エッジブレード',   dmg:40, cat:'blade', col:'#5cf0ff', desc:'正面1マスを斬撃', src:'初期フォルダ' },
+  WIDE    :{ id:'WIDE',    jp:'ワイドエッジ',     dmg:40, cat:'blade', col:'#7cf6ff', desc:'正面の縦3マスを斬撃', src:'好成績クリア報酬' },
+  LONG    :{ id:'LONG',    jp:'ロングエッジ',     dmg:50, cat:'blade', col:'#9cf8ff', desc:'正面2マス先まで斬撃', src:'好成績クリア報酬' },
+  REPAIR  :{ id:'REPAIR',  jp:'メンテナンス',     heal:55, cat:'heal', col:'#54e06a', desc:'HPを55回復', src:'初期フォルダ' },
+  TERRITORY:{id:'TERRITORY',jp:'テリトリー',      dmg:10, cat:'area',  col:'#3ad0c0', desc:'自陣を1列前進・敵を押す', src:'好成績クリア報酬' },
+  TRAP    :{ id:'TRAP',    jp:'トラップノード',   dmg:50, cat:'trap',  col:'#ff7a3c', desc:'敵前列に地雷を設置', src:'ウェーブ報酬' },
+  SURGE   :{ id:'SURGE',   jp:'サージウェーブ',   dmg:28, cat:'wave',  col:'#ff5cf0', desc:'行を貫通する衝撃波', src:'好成績クリア報酬' },
+  RAIN    :{ id:'RAIN',    jp:'データレイン',     dmg:24, cat:'meteor',col:'#ff4a5a', desc:'敵マス最大4ヶ所に落下', src:'好成績クリア報酬' },
+  CLUSTER :{ id:'CLUSTER', jp:'クラスターボム',   dmg:30, cat:'bomb',  col:'#ff8a2c', desc:'2マス先に縦3マス爆発', src:'好成績クリア報酬' },
+  BACK    :{ id:'BACK',    jp:'バックスラッシュ', dmg:45, cat:'back',  col:'#b06aff', desc:'敵最後列(縦3)を斬撃', src:'好成績クリア報酬 / OMEGA' }
+};
+const BASE_FOLDER = [
+  ['PULSE','A'],['PULSE','B'],['PULSE','C'],['PULSE','A'],
+  ['RAPID','A'],['RAPID','A'],
+  ['BLADE','S'],['BLADE','S'],['WIDE','W'],['WIDE','S'],['LONG','S'],
+  ['REPAIR','*'],['REPAIR','*'],
+  ['TERRITORY','*'],
+  ['TRAP','B'],['TRAP','B'],
+  ['SURGE','C'],['SURGE','C'],
+  ['RAIN','M'],['RAIN','M'],
+  ['CLUSTER','B'],['CLUSTER','B'],
+  ['BACK','L'],['BACK','L'],
+  ['PULSE','*'],['BLADE','*']
+];
+function ruleValid(list){
+  if (list.length<=1) return true;
+  if (list.every(c=>c.id===list[0].id)) return true;
+  const codes=list.map(c=>c.code).filter(c=>c!=='*');
+  if (codes.length===0) return true;
+  return codes.every(c=>c===codes[0]);
+}
+
+/* ============================ 状態 ============================ */
+const ST={ TITLE:'TITLE', DIFFICULTY:'DIFFICULTY', HELP:'HELP', LIBRARY:'LIBRARY', CUSTOM:'CUSTOM', BATTLE:'BATTLE',
+           RESULT:'RESULT', GAMEOVER:'GAMEOVER', VICTORY:'VICTORY', ACHIEVE:'ACHIEVE' };
+const G={
+  state:ST.TITLE, stateT:0, time:0,
+  wave:1, shake:0, hitstop:0, flashScreen:0,
+  diffIndex:1, diffName:'NORMAL', score:0,
+  panels:[], playerMaxCol:PLAYER_COLS-1, enemyMinCol:PLAYER_COLS,
+  p:{ col:0,row:1,hp:PLAYER.maxHp,moveCd:0,iframe:0,flash:0,busterCd:0,charge:0,charging:false },
+  enemies:[], shots:[], strikes:[], mines:[], fx:[], floats:[], embers:[],
+  customGauge:CUSTOM_FILL, customReady:true,
+  hand:[], selected:[], queue:[], cardRects:[], okRect:null, cursor:0, initialCustom:true,
+  folder:BASE_FOLDER.slice(),
+  comboId:null, comboCount:0,
+  chain:0, chainT:0, _newBest:false,
+  runDamage:0, runCounters:0,        // バスティング統計(ラン通算)
+  runPA:0, runMaxCombo:0,            // P.A.使用回数 / 最大コンボ（リザルト内訳用）
+  usedContinue:false,                // ノーコンティニュー判定（リトライしたら true → Sランク不可）
+  exMode:false, finalWave:TOTAL_WAVES, lastBossName:'INFERNO', // EXモード/最終ウェーブ/最後に倒したボス名
+  cutin:null, furyT:0,               // PAカットイン / FURY暗転演出
+  outroKind:null, outroT:0,          // クリア/撃破/敗北のアウトロ演出(撃破スロー等を見せてから遷移)
+  bustRank:'-', report:null,         // バスティングランク文字 / 内訳レポートオブジェクト
+  libCursor:0,                       // 図鑑のカーソル位置(閲覧中のチップ)
+  _ox:0, _oy:0,                      // 当該フレームの画面揺れオフセット(予告マーカーの整合用)
+  reward:null, _chipCd:0, _newAch:[]
+};
+const held={ up:false,down:false,left:false,right:false };
+let busterDown=false;
+
+/* ============================ スコアランク / セーブデータ(永続) ============================ */
+/* localStorage へ保存。使用不可環境(プライベートモード/アーティファクト等)でも
+   try/catch により例外で停止せず、その場合はセッション内保持にフォールバックする。 */
+const SAVE_KEY = 'gnb_save_v7';
+let BEST_TABLE = { EASY:0, NORMAL:0, HARD:0 };          // 難易度別ベストスコア
+let RANK_TABLE = { EASY:'-', NORMAL:'-', HARD:'-' };    // 難易度別ベスト・バスティングランク
+let DISCOVERED = {};                                    // 入手済みチップ { id:true }
+let NEWLY = {};                                         // 図鑑で未確認の新規入手チップ { id:true }
+let EX_UNLOCKED = false;                                // EXボス(OMEGA)解放フラグ（初回クリアで true）
+let BEST_EX = { EASY:0, NORMAL:0, HARD:0 };             // EX(2体連戦)専用ベストスコア(P2：通常と別枠)
+let RANK_EX = { EASY:'-', NORMAL:'-', HARD:'-' };       // EX専用ベスト・バスティングランク(P2)
+let ACH_DONE = {};                                      // 解放済み実績 { id:true }(P4)
+const SET = { fx:true, shake:1 };                       // 演出設定 shake:1=強/0.5=弱/0=なし
+const RANK_ORDER = { 'S+':5, S:4, A:3, B:2, C:1, '-':0 };  // S+ ＝最上位(全項目◎+無敗)(P1)
+/* 実績(メダル)定義(P4)：全難易度・EX・無傷・PERFECT・図鑑・やり込みへの動機づけ */
+const ACHIEVEMENTS = [
+  { id:'clearE',   name:'EASY CLEAR',   jp:'EASYクリア',   desc:'EASYでボスを撃破' },
+  { id:'clearN',   name:'NORMAL CLEAR', jp:'NORMALクリア', desc:'NORMALでボスを撃破' },
+  { id:'clearH',   name:'HARD CLEAR',   jp:'HARDクリア',   desc:'HARDでボスを撃破' },
+  { id:'clearEX',  name:'EX OMEGA',     jp:'EX OMEGA撃破', desc:'EXモードでOMEGAを撃破' },
+  { id:'flawless', name:'FLAWLESS',     jp:'無傷クリア',   desc:'被弾0でクリア' },
+  { id:'perfect',  name:'PERFECT RANK', jp:'PERFECT評価',  desc:'ランクS+(全項目◎)を獲得' },
+  { id:'master',   name:'DATA MASTER',  jp:'図鑑コンプ',   desc:'全12チップを収集' },
+  { id:'paAdept',  name:'P.A. ADEPT',   jp:'P.A.の使い手', desc:'1ラン中にP.A.を3回使用' },
+  { id:'chainer',  name:'CHAIN MASTER', jp:'連鎖の達人',   desc:'コンボ x5 以上を達成' }
+];
+function achCount(){ let n=0; for(const a of ACHIEVEMENTS) if(ACH_DONE[a.id]) n++; return n; }
+function unlockAch(id){ if(id && !ACH_DONE[id]){ ACH_DONE[id]=true; saveAll(); if(!G._newAch) G._newAch=[]; G._newAch.push(id); } } // 新規解放を保持(リザルト通知用)
+(function loadSave(){
+  try{
+    const raw = localStorage.getItem(SAVE_KEY);
+    if(raw){ const o = JSON.parse(raw);
+      if(o && typeof o==='object'){
+        if(o.best) for(const k of ['EASY','NORMAL','HARD']){ if(typeof o.best[k]==='number' && o.best[k]>=0) BEST_TABLE[k]=o.best[k]|0; }
+        if(o.rank) for(const k of ['EASY','NORMAL','HARD']){ if(typeof o.rank[k]==='string') RANK_TABLE[k]=o.rank[k]; }
+        if(o.bestEx) for(const k of ['EASY','NORMAL','HARD']){ if(typeof o.bestEx[k]==='number' && o.bestEx[k]>=0) BEST_EX[k]=o.bestEx[k]|0; }   // EX別枠ベスト(P2)
+        if(o.rankEx) for(const k of ['EASY','NORMAL','HARD']){ if(typeof o.rankEx[k]==='string') RANK_EX[k]=o.rankEx[k]; }                       // EX別枠ランク(P2)
+        if(o.disc && typeof o.disc==='object'){ for(const id in o.disc){ if(o.disc[id]===true) DISCOVERED[id]=true; } }
+        if(o.newly && typeof o.newly==='object'){ for(const id in o.newly){ if(o.newly[id]===true) NEWLY[id]=true; } }
+        if(o.ach && typeof o.ach==='object'){ for(const id in o.ach){ if(o.ach[id]===true) ACH_DONE[id]=true; } }                                // 実績(P4)
+        if(typeof o.ex==='boolean') EX_UNLOCKED=o.ex;
+        if(o.set){ if(typeof o.set.fx==='boolean') SET.fx=o.set.fx; if(typeof o.set.shake==='number') SET.shake=o.set.shake; }
+      } }
+  }catch(e){ /* 使用不可 → セッション内のみ */ }
+})();
+function saveAll(){ try{ localStorage.setItem(SAVE_KEY, JSON.stringify({best:BEST_TABLE,rank:RANK_TABLE,bestEx:BEST_EX,rankEx:RANK_EX,disc:DISCOVERED,newly:NEWLY,ach:ACH_DONE,ex:EX_UNLOCKED,set:{fx:SET.fx,shake:SET.shake}})); }catch(e){} }
+function discover(id){ if(id && !DISCOVERED[id]){ DISCOVERED[id]=true; NEWLY[id]=true; saveAll(); if(libComplete()) unlockAch('master'); } } // 図鑑コンプで実績(P4)
+function libCount(){ let n=0; for(const id of Object.keys(CHIPS)) if(DISCOVERED[id]) n++; return n; }
+function libComplete(){ return libCount()>=Object.keys(CHIPS).length; }
+function clearNewly(){ let ch=false; for(const id in NEWLY){ delete NEWLY[id]; ch=true; } if(ch) saveAll(); } // 図鑑確認で「NEW!」を消す
+/* 演出設定ヘルパ：fxがOFFなら停止系を全て無効化（全機能は通常動作） */
+function hs(v){ return SET.fx ? v : 0; }          // ヒットストップ
+function fl(v){ return SET.fx ? v : 0; }          // 画面フラッシュ
+let BEST_SCORE = 0; // 現在プレイ中の難易度のベスト（startGameで設定）
+function isExRun(){ return G.finalWave===5; }          // EXラン＝OMEGA(=wave5)到達構成(P2)
+function curBestTable(){ return isExRun()?BEST_EX:BEST_TABLE; } // 系列別ベスト表(通常/EX)
+function curRankTable(){ return isExRun()?RANK_EX:RANK_TABLE; } // 系列別ランク表(通常/EX)
+function commitBest(score){ // 現在系列(通常/EX)のベストを更新。更新できたら true（NEW BEST）(P2)
+  const d = G.diffName || 'NORMAL'; const tbl = curBestTable();
+  let isNew=false;
+  if(score > (tbl[d]||0)){ tbl[d]=score; BEST_SCORE=score; isNew=true; }
+  else BEST_SCORE = Math.max(BEST_SCORE, tbl[d]||0);
+  saveAll();
+  return isNew;
+}
+function commitRank(rk){ // 現在系列(通常/EX)のベストランクを更新（より高いランクのみ）(P2)
+  const d = G.diffName || 'NORMAL'; const tbl = curRankTable();
+  if((RANK_ORDER[rk]||0) > (RANK_ORDER[tbl[d]]||0)){ tbl[d]=rk; saveAll(); }
+}
+function rankFor(score){
+  if(score>=4200) return {r:'S', col:'#ffe23c'};
+  if(score>=3400) return {r:'A', col:'#7df0ff'};
+  if(score>=2600) return {r:'B', col:'#7dff9a'};
+  return {r:'C', col:'#bfe3ff'};
+}
+function rankColor(r){ return r==='S+'?'#fff5c0':r==='S'?'#ffe23c':r==='A'?'#7df0ff':r==='B'?'#7dff9a':r==='C'?'#bfe3ff':'#6f8aa8'; }
+function gradeCol(g){ return g==='◎'?'#ffe23c':(g==='○'?'#7df0ff':'#8fa0b8'); } // 内訳グレード色(◎金/○水/△灰)
+/* バスティング評価：被ダメージ(少◎)・カウンター数(多◎)・クリアタイム(速◎)を総合し、
+   内訳(◎/○/△)と「次に改善すべき点」のヒントを返す。クリア(VICTORY)時のみ算出される＝
+   失敗(GAME OVER)では決して S〜C が付かない。さらに S は「ノーコンティニュー」を必須とする。 */
+function clearReport(){
+  const dmg  = G.runDamage   || 0;
+  const cnt  = G.runCounters || 0;
+  const pa   = G.runPA       || 0;
+  const cmb  = G.runMaxCombo || 0;
+  const time = Math.max(1, (G.time - (G.runStart||0)));   // 下限1秒：極端値でもゼロ除算・破綻なし(P1)
+  // 各軸グレード（◎=優 / ○=良 / △=改善余地）。閾値を明示定義(P1)
+  const gDmg  = dmg<=120 ? '◎' : (dmg<=300 ? '○' : '△');  // 被弾：少ないほど良い
+  const gCnt  = cnt>=6   ? '◎' : (cnt>=3   ? '○' : '△');  // カウンター：多いほど良い
+  const gTime = time<=130? '◎' : (time<=200? '○' : '△');  // タイム：速いほど良い
+  const gPA   = pa>=2    ? '◎' : (pa>=1    ? '○' : '△');  // P.A.：使うほど良い
+  const gCmb  = cmb>=4   ? '◎' : (cmb>=2   ? '○' : '△');  // コンボ：高いほど良い
+  // 内訳5軸を点数化(◎=2/○=1/△=0)→合計(最大10)から総合ランク決定(P1：内訳に連動)
+  const gr = g => (g==='◎'?2:(g==='○'?1:0));
+  const score10 = gr(gDmg)+gr(gCnt)+gr(gTime)+gr(gPA)+gr(gCmb);
+  const allPerfect = (gDmg==='◎'&&gCnt==='◎'&&gTime==='◎'&&gPA==='◎'&&gCmb==='◎');
+  // ランク決定（クリア前提）。S+ は「全項目◎ かつ ノーコンティニュー」が必須。
+  let rank, capped=false;
+  if(allPerfect && !G.usedContinue) rank='S+';
+  else if(score10>=8) rank='S';
+  else if(score10>=6) rank='A';
+  else if(score10>=3) rank='B';
+  else rank='C';
+  if((rank==='S+'||rank==='S') && G.usedContinue){ rank='A'; capped=true; } // コンティニュー使用は最上位不可
+  // 改善ヒント（最も弱い軸の「次の目標」を数値で提示）(V10 P2)
+  let tip; const tCeil=Math.ceil(time);
+  if(gDmg==='△')      tip='TIP: 被弾をあと'+(dmg-300)+'軽減で○へ';
+  else if(gCnt==='△') tip='TIP: あとCOUNTER '+(3-cnt)+'回で○へ';
+  else if(gTime==='△')tip='TIP: あと'+(tCeil-200)+'秒短縮で○へ';
+  else if(gPA==='△')  tip='TIP: P.A.を1回決めると○へ';
+  else if(gCmb==='△') tip='TIP: 同名チップ連続でCOMBO X2 → ○へ';
+  else if(capped)     tip='TIP: ノーコンティニュー(無敗)でS+到達';
+  else if(rank!=='S+'){                                  // 全項目○以上 → 最も近い◎昇格を案内
+    if(gDmg==='○')      tip='TIP: 被弾 '+dmg+'→120以下で◎へ';
+    else if(gCnt==='○') tip='TIP: COUNTER '+cnt+'→6回で◎へ';
+    else if(gTime==='○')tip='TIP: タイム '+tCeil+'→130秒以下で◎へ';
+    else if(gPA==='○')  tip='TIP: P.A.を計2回決めると◎へ';
+    else if(gCmb==='○') tip='TIP: COMBO X4 で◎へ';
+    else                tip='TIP: 全項目◎+無敗でS+(PERFECT)へ';
+  }
+  else                tip='PERFECT! 全項目◎の完璧なプレイ';
+  return { rank, score10, gDmg, gCnt, gTime, gPA, gCmb, dmg, cnt, pa, cmb, time, allPerfect, capped, tip };
+}
+
+/* ============================ 透視グリッド ============================ */
+const FIELD={ tl:{x:70,y:64}, tr:{x:314,y:64}, bl:{x:26,y:182}, br:{x:358,y:182} };
+function fieldPoint(u,v){
+  const tx=lerp(FIELD.tl.x,FIELD.tr.x,u), bx=lerp(FIELD.bl.x,FIELD.br.x,u);
+  return { x:lerp(tx,bx,v), y:lerp(FIELD.tl.y,FIELD.bl.y,v) };
+}
+function cellCenter(c,r){ return fieldPoint((c+0.5)/COLS,(r+0.5)/ROWS); }
+function fxPoint(fx,r){ return fieldPoint(fx/COLS,(r+0.5)/ROWS); }
+
+/* ============================ フィールド ============================ */
+function buildField(cracks,ices){
+  G.panels=[];
+  for(let r=0;r<ROWS;r++){ const row=[]; for(let c=0;c<COLS;c++) row.push({type:'normal',regen:0}); G.panels.push(row); }
+  if(cracks) for(const [c,r] of cracks){ if(G.panels[r]&&G.panels[r][c]) G.panels[r][c].type='crack'; }
+  if(ices)   for(const [c,r] of ices){ if(G.panels[r]&&G.panels[r][c]) G.panels[r][c].type='ice'; }
+  G.playerMaxCol=PLAYER_COLS-1; G.enemyMinCol=PLAYER_COLS;
+}
+function panelAt(c,r){ if(c<0||c>=COLS||r<0||r>=ROWS) return null; return G.panels[r][c]; }
+function standable(c,r){ const p=panelAt(c,r); return !!p && p.type!=='hole'; }
+
+/* ============================ 敵生成 / ウェーブ ============================ */
+function makeEnemy(type,col,row,hpMul,aggro){
+  const d=ENEMY_DEF[type];
+  const hpScale=isBossType(type)?DIFF.bossHp:DIFF.hp;
+  const hp=Math.round(d.hp*(hpMul||1)*hpScale);
+  const ag=(aggro||1)*DIFF.aggro;
+  const e={ type,col,row,hp,maxHp:hp,flash:0,dead:false,invuln:false,home:col,stun:0,
+            t:Math.random()*1.0,phase:'idle',moveCd:0,bossAtkIndex:0,phase2:false,
+            attackTimer:0,aggro:ag,bob:Math.random()*6 };
+  if(type==='crawler'){ e.phase='visible'; e.t=0.6+Math.random()*0.7; }
+  if(type==='blade'){ e.phase='wander'; e.t=0.7+Math.random()*0.7; }
+  if(type==='mortar'){ e.phase='idle'; e.t=(0.9+Math.random()*0.9)*e.aggro; }
+  if(type==='boss'){ e.phase='recover'; e.t=1.0; }
+  if(type==='omega'){ e.phase='recover'; e.t=1.0; }
+  return e;
+}
+function makeWaveEnemies(w){
+  if(w===1) return [ makeEnemy('crawler',4,0), makeEnemy('crawler',4,2) ];
+  if(w===2) return [ makeEnemy('turret',5,1), makeEnemy('blade',4,2), makeEnemy('crawler',4,0) ];
+  if(w===3) return [ makeEnemy('mortar',5,0,1.12,0.85), makeEnemy('mortar',5,2,1.12,0.85),
+                     makeEnemy('turret',4,1,1.12,0.85), makeEnemy('blade',5,1,1.12,0.85) ];
+  if(w===4) return [ makeEnemy('boss',4,1) ];
+  if(w===5) return [ makeEnemy('omega',4,1) ];   // EXボス
+  return [];
+}
+function isBossWave(w){ return w===4||w===5; }   // ボスが登場するウェーブ
+function waveCracks(w){ if(w===3) return [[2,0]]; if(w===4) return [[2,1],[1,2]]; if(w===5) return [[4,0],[4,2]]; return []; } // OMEGAは敵陣のみ(自陣は事故防止で地形なし)
+function waveIces(w){ if(w===3) return [[1,0],[1,1]]; return []; }
+
+function startGame(){
+  DIFF = DIFFS[ DIFF_ORDER[G.diffIndex] ] || DIFFS.NORMAL;
+  G.diffName = DIFF.name;
+  G.finalWave = (G.exMode && EX_UNLOCKED) ? 5 : TOTAL_WAVES; // EXモードはOMEGA(=5)まで(先に決定→ベスト系列を正しく参照)
+  G.lastBossName = (G.finalWave===5) ? 'OMEGA' : 'INFERNO';
+  BEST_SCORE = curBestTable()[DIFF.key] || 0; // 現在系列(通常/EX)の保存済みベストを表示基準に(P2)
+  G.score = 0;
+  G.runStart = G.time;
+  G.runDamage = 0; G.runCounters = 0; G.bustRank='-';
+  G.runPA = 0; G.runMaxCombo = 0; G.usedContinue = false;   // ラン単位の統計をリセット
+  G._newAch = [];                                           // 今回ラン新規解放実績(P4)
+  G.cutin = null; G.furyT = 0;
+  G.folder = BASE_FOLDER.slice();
+  startWave(1);
+}
+function startWave(w){
+  G.wave=w;
+  G._waveStartScore = G.score; // このウェーブ開始時点のスコア（リトライ時の巻き戻し用）
+  buildField(waveCracks(w),waveIces(w));
+  G.p.col=0; G.p.row=1; G.p.hp=PLAYER.maxHp;
+  G.p.moveCd=0; G.p.iframe=0; G.p.flash=0; G.p.busterCd=0; G.p.charge=0; G.p.charging=false;
+  busterDown=false;
+  G.enemies=makeWaveEnemies(w);
+  G.shots=[]; G.strikes=[]; G.mines=[]; G.fx=[]; G.floats=[]; G.embers=[];
+  G.queue=[]; G.comboId=null; G.comboCount=0;
+  G.chain=0; G.chainT=0; G._newBest=false;
+  G.cutin=null; G.furyT=0;
+  G.outroKind=null; G.outroT=0;
+  G.customGauge=CUSTOM_FILL; G.customReady=true;
+  G.hitstop=0; G.shake=0; G.flashScreen=0;
+  bgmStart(isBossWave(w));
+  enterCustom(true);
+}
+
+/* ============================ カスタム画面 ============================ */
+function enterCustom(initial){
+  if(!initial && (G.state!==ST.BATTLE || G.outroKind)) return; // アウトロ中/戦闘外からは開かない
+  G.initialCustom=!!initial;
+  G.hand = shuffle(G.folder).slice(0,8).map(([id,code])=>({id,code}));
+  G.selected=[]; G.cursor=0; G.state=ST.CUSTOM; G.stateT=0;
+  beep(560,0.05); beep(760,0.06);
+}
+function selectedChips(){ return G.selected.map(i=>({id:G.hand[i].id,code:G.hand[i].code})); }
+function canAddIndex(i){
+  if(G.selected.includes(i)) return false;
+  if(G.selected.length>=5) return false;
+  return ruleValid(selectedChips().concat([{id:G.hand[i].id,code:G.hand[i].code}]));
+}
+function toggleSelect(i){
+  const pos=G.selected.indexOf(i);
+  if(pos>=0){ G.selected.splice(pos,1); beep(420,0.04); return; }
+  if(canAddIndex(i)){ G.selected.push(i); beep(720,0.05); }
+  else beep(170,0.06,'square');
+}
+function confirmCustom(){
+  const sel=selectedChips();
+  for(const c of sel) discover(c.id); // 使用チップを図鑑に記録
+  const pa=detectPA(sel);
+  G.queue = pa ? [{pa}] : sel;
+  G.customGauge=0; G.customReady=false;
+  G.state=ST.BATTLE; G.stateT=0;
+  if(pa) beep(1300,0.1,'sawtooth');
+  beep(900,0.08); beep(1200,0.06);
+}
+
+/* ============================ チップ効果 ============================ */
+/* --- プログラムアドバンス（特定の組み合わせで必殺技） --- */
+const PA_NAMES={ PULSE:'GIGA CANNON', RAPID:'VULCAN STORM', BLADE:'BLADE STORM', WIDE:'WIDE BLITZ',
+  LONG:'LONG BLITZ', SURGE:'OMEGA WAVE', RAIN:'METEOR FALL', CLUSTER:'CLUSTER HELL', BACK:'CROSS RAVE' };
+const PA_DMG={ PULSE:62, RAPID:50, BLADE:70, WIDE:70, LONG:92, SURGE:70, RAIN:60, CLUSTER:66, BACK:80 };
+function paFxFor(cat){ return cat==='blade'||cat==='back'?'slash':cat==='bomb'?'bomb':'meteor'; }
+function detectPA(sel){
+  if(sel.length>=3 && sel.every(c=>c.id===sel[0].id) && PA_NAMES[sel[0].id]){
+    const id=sel[0].id; return {name:PA_NAMES[id],dmg:PA_DMG[id],col:CHIPS[id].col,fx:paFxFor(CHIPS[id].cat)};
+  }
+  const ids=sel.map(c=>c.id).sort().join(',');
+  if(sel.length===3 && ids==='BLADE,LONG,WIDE') return {name:'DELTA EDGE',kind:'delta',col:'#7df0ff'};
+  return null;
+}
+/* --- P.A.成立機会の解析（V10：可視化のため、現在の手札から「組めるP.A.」を割り出す） ---
+   detectPA は「選択済みチップ」が既にP.A.かを判定するのに対し、ここでは「手札全体」を見て
+   どの組み合わせを選べばP.A.になるかを事前に提示する。DELTA(BLADE+WIDE+LONG)は選択ルール
+   (ruleValid＝同コード/万能)を満たす三枚が手札に揃っている場合のみ成立対象とする。 */
+function findDeltaTrio(B,W,L){
+  for(const bi of B) for(const wi of W) for(const li of L){
+    if(ruleValid([G.hand[bi],G.hand[wi],G.hand[li]])) return [bi,wi,li];
+  }
+  return null;
+}
+function analyzeHandPA(){
+  const list=[], cardSet=new Set();
+  const byId={};
+  G.hand.forEach((h,i)=>{ (byId[h.id]=byId[h.id]||[]).push(i); });
+  for(const id in byId){
+    if(byId[id].length>=3 && PA_NAMES[id]){              // 同名3枚以上 → 同名P.A.
+      list.push({type:'same', id, name:PA_NAMES[id], idx:byId[id].slice()});
+      byId[id].forEach(i=>cardSet.add(i));
+    }
+  }
+  const trio=findDeltaTrio(byId['BLADE']||[],byId['WIDE']||[],byId['LONG']||[]);
+  if(trio){ list.push({type:'delta', name:'DELTA EDGE', idx:trio}); trio.forEach(i=>cardSet.add(i)); }
+  return {list, cardSet};
+}
+/* この手札インデックスを今の選択に加えると、選択がP.A.として成立するか（＝「あと一枚で完成」） */
+function wouldCompletePA(i){
+  if(G.selected.includes(i) || !canAddIndex(i)) return false;
+  const trial=selectedChips().concat([{id:G.hand[i].id,code:G.hand[i].code}]);
+  return !!detectPA(trial);
+}
+function paCells(){ const cells=[]; for(let c=G.enemyMinCol;c<COLS;c++) for(let r=0;r<ROWS;r++) cells.push([c,r]); return cells; }
+function doPA(pa){
+  G.runPA++;                                  // P.A.使用回数(リザルト内訳用)
+  const mid=(G.enemyMinCol+COLS-1)/2;
+  // 技名カットイン（バトルは進行＝敵処理・撃破判定・ウェーブ進行は停止しない）
+  G.cutin = { name:pa.name, col:pa.col||'#ff5af0', t:0, life:0.8 };
+  G.p.iframe = Math.max(G.p.iframe, 0.5); // 演出中は無敵
+  G.flashScreen=fl(0.3); G.hitstop=Math.max(G.hitstop,hs(0.13)); G.shake=Math.max(G.shake,0.5);
+  beep(1500,0.18); beep(900,0.16,'sawtooth'); beep(1800,0.1);
+  addFx('pa',cellCenter(mid,1),'#ff5af0',0.7);
+  const PA_BONUS=250; G.score+=PA_BONUS;                         // V10：P.A.成功への明確なスコア報酬
+  addFloat('P.A. +'+PA_BONUS, cellCenter(mid,-0.3), '#ff9ae0', 1.7, 1.1);
+  let cells,dmg,kind,warn;
+  if(pa.kind==='delta'){ cells=[]; for(const c of [G.enemyMinCol,Math.min(COLS-1,G.enemyMinCol+1)]) for(let r=0;r<ROWS;r++) cells.push([c,r]);
+    dmg=75; kind='slash'; warn=0.1; }
+  else { cells=paCells(); dmg=pa.dmg; kind=pa.fx; warn=0.18; }
+  addStrike({owner:'p',cells,warn,hit:0.3,dmg,kind,col:pa.col||'#ff5af0',stun:0.6});
+}
+function spawnShot(opt){
+  G.shots.push(Object.assign({owner:'p',fx:0,row:G.p.row,vx:BUSTER.vx,dmg:BUSTER.dmg,
+    pierce:false,hitSet:new Set(),kind:'buster',r:2,col:'#bfe9ff'},opt));
+}
+function applyChip(ch,mult){
+  mult = mult||1;
+  const def=CHIPS[ch.id], row=G.p.row, col=G.p.col;
+  const D = v=>Math.round(v*mult);
+  switch(def.cat){
+    case 'shot':
+      if(def.hits){ for(let k=0;k<def.hits;k++) spawnShot({fx:(col+0.5)-k*0.28,row,vx:BUSTER.vx+3,dmg:D(def.dmg),kind:'chip',col:def.col,r:2}); }
+      else spawnShot({fx:col+0.6,row,vx:14,dmg:D(def.dmg),kind:'chip',col:def.col,r:3});
+      break;
+    case 'wave':
+      spawnShot({fx:col+0.6,row,vx:11,dmg:D(def.dmg),pierce:true,kind:'wave',col:def.col,r:4});
+      break;
+    case 'blade':{
+      const cells=[];
+      if(def.id==='BLADE') cells.push([col+1,row]);
+      if(def.id==='WIDE') for(let r=0;r<ROWS;r++) cells.push([col+1,r]);
+      if(def.id==='LONG'){ cells.push([col+1,row]); cells.push([col+2,row]); }
+      addStrike({owner:'p',cells,warn:0.05,hit:0.18,dmg:D(def.dmg),kind:'slash',col:def.col}); break;
+    }
+    case 'back':{ const cells=[]; for(let r=0;r<ROWS;r++) cells.push([5,r]);
+      addStrike({owner:'p',cells,warn:0.1,hit:0.18,dmg:D(def.dmg),kind:'slash',col:def.col}); break; }
+    case 'meteor':{ const occ=enemyOccupiedCells(); let t=(occ.length?occ:enemyCellsAll()); t=shuffle(t).slice(0,4);
+      addStrike({owner:'p',cells:t,warn:0.6,hit:0.2,dmg:D(def.dmg),kind:'meteor',col:def.col}); break; }
+    case 'bomb':{ const cx=clamp(col+2,0,COLS-1); const cells=[]; for(let r=0;r<ROWS;r++) cells.push([cx,r]);
+      addStrike({owner:'p',cells,warn:0.45,hit:0.2,dmg:D(def.dmg),kind:'bomb',col:def.col}); break; }
+    case 'trap':{ const cx=G.enemyMinCol; G.mines.push({col:cx,row,t:6.0,dmg:D(def.dmg),col_:def.col});
+      addFx('spawn',cellCenter(cx,row),def.col,0.3); break; }
+    case 'heal':{ const h=D(def.heal); G.p.hp=clamp(G.p.hp+h,0,PLAYER.maxHp);
+      addFx('heal',playerFoot(),def.col,0.6); addFloat('+'+h,playerFoot(),'#7dff9a',1); beep(900,0.12); break; }
+    case 'area':{ const before=G.playerMaxCol;
+      G.playerMaxCol=Math.min(4,G.playerMaxCol+1); G.enemyMinCol=G.playerMaxCol+1;
+      for(const e of G.enemies){ if(e.dead) continue; if(e.col<G.enemyMinCol){ e.col=Math.min(5,G.enemyMinCol);
+        damageEnemy(e,D(def.dmg)); } }
+      if(G.playerMaxCol!==before) addFx('area',cellCenter(G.playerMaxCol,1),def.col,0.4);
+      beep(520,0.1); break; }
+  }
+  beep(760,0.05,'square');
+}
+function useNextChip(){
+  if(G.state!==ST.BATTLE) return;
+  if(G.outroKind) return;                       // アウトロ演出中は入力を受けない(多重発火防止)
+  if(G.queue.length===0){ beep(160,0.05,'square'); return; }
+  if(G._chipCd>0) return;
+  const ch=G.queue.shift();
+  if(ch.pa){ doPA(ch.pa); G.comboId=null; G.comboCount=0; G._chipCd=CHIP_USE_CD; return; }
+  // 同名コンボ
+  if(ch.id===G.comboId) G.comboCount++; else { G.comboId=ch.id; G.comboCount=1; }
+  G.runMaxCombo=Math.max(G.runMaxCombo,G.comboCount);   // 最大コンボ(リザルト内訳用)
+  let mult=1;
+  if(G.comboCount>=2) mult=1+0.3*(G.comboCount-1);
+  mult=Math.min(mult,2.2);
+  applyChip(ch,mult);
+  if(G.comboCount>=2){                                              // V10：コンボ継続への段階的スコア報酬＋表記の明確化
+    const cb=40*(G.comboCount-1); G.score+=cb;                      // x2:+40 x3:+80 x4:+120 ...
+    if(G.comboCount>=3){ addFloat('COMBO X'+G.comboCount+'!  +'+cb,cellCenter(G.p.col,G.p.row-0.3),'#ffe23c',1.7); G.flashScreen=fl(0.15); G.hitstop=Math.max(G.hitstop,hs(0.06)); beep(1400,0.12); }
+    else { addFloat('COMBO X'+G.comboCount+'  +'+cb,cellCenter(G.p.col,G.p.row-0.3),'#ffd23c',1.4); beep(1100,0.08); }
+  }
+  G._chipCd=CHIP_USE_CD;
+}
+
+/* ============================ ストライク / 地雷 / 衝突 ============================ */
+/* --- 大域的な安全マス保証：すべての敵ストライク(警告中含む)の重なりでも、
+       立てる自陣マスが必ず1つ以上残るよう、新規ストライクから該当マスを除外する。 --- */
+function allyStandCells(){
+  const out=[];
+  for(let c=0;c<=G.playerMaxCol;c++) for(let r=0;r<ROWS;r++) if(standable(c,r)) out.push([c,r]);
+  return out;
+}
+/* 自機の現在地から1マス以内(現在地＋上下左右)で、立てる自陣マス。
+   「安全マスは現在位置から1マス移動で到達可能」(チェックリストA-2)の判定に用いる。 */
+function reachableCells(){
+  const out=[]; const cand=[[G.p.col,G.p.row],[G.p.col+1,G.p.row],[G.p.col-1,G.p.row],[G.p.col,G.p.row+1],[G.p.col,G.p.row-1]];
+  for(const [c,r] of cand){ if(c<0||c>G.playerMaxCol||r<0||r>=ROWS) continue; if(standable(c,r)) out.push([c,r]); }
+  return out;
+}
+function ensureGlobalSafe(newStrike){
+  const stand=allyStandCells();
+  if(!stand.length) return;
+  const cov=new Set();
+  for(const s of G.strikes){ if(s.owner!=='e'||s.applied) continue; for(const [c,r] of s.cells){ if(c<=G.playerMaxCol) cov.add(c+','+r); } }
+  for(const [c,r] of newStrike.cells){ if(c<=G.playerMaxCol) cov.add(c+','+r); }
+  const reach=reachableCells();
+  if(reach.some(([c,r])=>!cov.has(c+','+r))) return; // 到達圏内に安全マスあり → OK
+  // 到達圏内が全て危険 → 到達圏内(なければ手前優先のstand)から1マス必ず空ける
+  let target = reach.length ? reach.slice().sort((a,b)=>a[0]-b[0]||a[1]-b[1])[0] : null;
+  if(!target){ stand.sort((a,b)=>a[0]-b[0]||a[1]-b[1]); target=stand[0]; }
+  const [sc,sr]=target;
+  newStrike.cells=newStrike.cells.filter(([c,r])=>!(c===sc&&r===sr));
+  for(const s of G.strikes){ if(s.owner!=='e'||s.applied) continue; s.cells=s.cells.filter(([c,r])=>!(c===sc&&r===sr)); }
+}
+function addStrike(s){ const o=Object.assign({t:0,applied:false,phase:'warn'},s); if(o.owner==='e') ensureGlobalSafe(o); G.strikes.push(o); }
+function enemyOccupiedCells(){ const set=new Set(),out=[]; for(const e of G.enemies){ if(e.dead) continue; const k=e.col+','+e.row; if(!set.has(k)){set.add(k);out.push([e.col,e.row]);} } return out; }
+function enemyCellsAll(){ const out=[]; for(let c=G.enemyMinCol;c<COLS;c++) for(let r=0;r<ROWS;r++) out.push([c,r]); return out; }
+function killEnemy(e){
+  if(e.dead) return;
+  e.dead=true;                       // 即時確定 → FURY移行との相打ち/多重発火を防止
+  const isBoss = isBossType(e.type);
+  const bcol = ENEMY_DEF[e.type].col;
+  const base = (isBoss?1000:120);
+  // 撃破チェイン：直前の撃破から CHAIN_WINDOW 秒以内なら連鎖が伸びる
+  if(G.chainT>0) G.chain++; else G.chain=1;
+  G.chainT = CHAIN_WINDOW;
+  let gain = base;
+  if(G.chain>=2 && !isBoss){
+    const bonus = Math.round(base * 0.4 * Math.min(G.chain-1, 4)); // 連鎖ボーナス（上限x4段）
+    gain += bonus;
+    addFloat('CHAIN x'+G.chain+'  +'+bonus, cellCenter(e.col,e.row-0.9), '#ffb03c', 1.3+Math.min(G.chain*0.05,0.4));
+    beep(1000+Math.min(G.chain,6)*90, 0.07, 'square');
+  }
+  G.score += gain;
+  addFx('delete',cellCenter(e.col,e.row),bcol,0.6);
+  if(isBoss){
+    // ボス撃破：大爆散＋スロー(ヒットストップ)＋CLEAR
+    for(let i=0;i<5;i++) addFx('delete', cellCenter(e.col+(Math.random()-0.5),e.row+(Math.random()-0.5)), bcol, 0.7);
+    addFloat('CLEAR', cellCenter(e.col,e.row-0.5), '#7dff9a', 2.4, 0.95);
+    G.hitstop=Math.max(G.hitstop,hs(0.42)); G.flashScreen=Math.max(G.flashScreen,fl(0.4)); G.shake=Math.max(G.shake,0.5);
+    beep(900,0.16); beep(500,0.2,'sawtooth'); beep(300,0.32,'sawtooth'); // 撃破音：重い爆散
+  } else {
+    if(G.chain<2 && !e._counterKill) addFloat('DELETE',cellCenter(e.col,e.row-0.4),'#ffffff',1.6,0.45); // 連鎖中はCHAIN・カウンター撃破はCOUNTERに集約(P3)
+    G.hitstop=Math.max(G.hitstop,hs(0.09)); G.flashScreen=Math.max(G.flashScreen,fl(0.1)); G.shake=Math.max(G.shake,0.2);
+    beep(220,0.18,'sawtooth'); beep(120,0.22,'sawtooth'); // 撃破音
+  }
+}
+function damageEnemy(e,dmg){
+  if(e.dead||e.invuln) return;
+  let counter=false;
+  if(e.tele){ counter=true; e.tele=false; e.stun=Math.max(e.stun,0.35); dmg=Math.round(dmg*1.5); } // カウンター成立
+  e.hp-=dmg; e.flash=0.12;
+  const big = dmg>=30;
+  addFloat((counter?'CRIT ':'')+'-'+dmg, cellCenter(e.col,e.row-0.2),
+           counter?'#ffd23c':(big?'#fff0a0':'#ffe0e0'), counter?1.5:(big?1.2:1));
+  if(counter){
+    const bonus=60;
+    addFloat('COUNTER!  +'+bonus, cellCenter(e.col,e.row-0.8), '#ffe23c', 1.6);
+    addFx('pa', cellCenter(e.col,e.row), '#ffe23c', 0.4);
+    G.customGauge=Math.min(CUSTOM_FILL,G.customGauge+CUSTOM_FILL*0.18); // ゲージ加速
+    G.score+=bonus; G.runCounters++;
+    G.hitstop=Math.max(G.hitstop,hs(0.12)); G.flashScreen=Math.max(G.flashScreen,fl(0.16));
+    beep(1600,0.07); beep(1200,0.07,'square'); beep(2000,0.05); // カウンター音：きらめき
+  } else if(big){
+    G.hitstop=Math.max(G.hitstop,hs(0.09)); beep(900,0.04,'square'); // 大ヒット音
+  }
+  if(e.hp<=0){ if(counter) e._counterKill=true; killEnemy(e); } // カウンター撃破はDELETE表示を抑制(P3)
+}
+function damagePlayer(dmg){
+  if(G.p.iframe>0) return;
+  G.p.hp=clamp(G.p.hp-dmg,0,PLAYER.maxHp);
+  G.runDamage += dmg; // バスティング評価用
+  G.p.iframe=PLAYER.iframe; G.p.flash=0.3; G.shake=Math.max(G.shake,0.32); G.hitstop=Math.max(G.hitstop,hs(0.05));
+  addFloat('-'+dmg,playerFoot(),'#ff7a7a',1.05);
+  beep(150,0.18,'square'); beep(90,0.12,'sawtooth'); // 被弾音：鈍い低音
+}
+
+/* ============================ 描画ヘルパ ============================ */
+function px(x,y,w,h,c){ ctx.fillStyle=c; ctx.fillRect(Math.round(x),Math.round(y),Math.round(w),Math.round(h)); }
+function playerFoot(){ return cellCenter(G.p.col,G.p.row); }
+/* --- ピクセル量子化ツールキット（円弧/線を使わず整数ブロックのみ。にじみ無し） --- */
+const PXU=2; // ドット単位サイズ
+function qa(a){ return Math.max(0,Math.round(clamp(a,0,1)*4)/4); } // アルファを4段に量子化
+function pdot(x,y,c,s){ s=s||PXU; ctx.fillStyle=c; ctx.fillRect(Math.round(x/s)*s,Math.round(y/s)*s,s,s); }
+function pring(cx,cy,r,c,s){ s=s||PXU; r=Math.max(1,r); const n=Math.max(8,Math.round(r*1.4));
+  for(let i=0;i<n;i++){ const a=i/n*6.283; pdot(cx+Math.cos(a)*r,cy+Math.sin(a)*r,c,s); } }
+function pdisc(cx,cy,r,c,s){ s=s||PXU; cx=Math.round(cx/s)*s; cy=Math.round(cy/s)*s;
+  for(let y=-r;y<=r;y+=s) for(let x=-r;x<=r;x+=s){ if(x*x+y*y<=r*r){ ctx.fillStyle=c; ctx.fillRect(cx+x,cy+y,s,s); } } }
+function pline(x0,y0,x1,y1,c,s){ s=s||PXU; let dx=Math.abs(x1-x0),dy=Math.abs(y1-y0);
+  const n=Math.max(1,Math.round(Math.max(dx,dy)/s));
+  for(let i=0;i<=n;i++){ const t=i/n; pdot(lerp(x0,x1,t),lerp(y0,y1,t),c,s); } }
+function pframe(x,y,w,h,c,s){ s=s||PXU; for(let i=0;i<w;i+=s){ pdot(x+i,y,c,s); pdot(x+i,y+h-s,c,s); }
+  for(let j=0;j<h;j+=s){ pdot(x,y+j,c,s); pdot(x+w-s,y+j,c,s); } }
+function pcross(cx,cy,r,c,s){ s=s||PXU; for(let i=-r;i<=r;i+=s){ pdot(cx+i,cy,c,s); pdot(cx,cy+i,c,s); } }
+
+/* ============================ キャラ描画(矩形ドット) ============================ */
+function drawPlayer(){
+  const c=cellCenter(G.p.col,G.p.row); const x=Math.round(c.x),y=Math.round(c.y);
+  if(G.p.flash>0 && Math.floor(G.p.flash*30)%2===0) return;
+  px(x-9,y+8,18,4,'rgba(0,0,0,0.35)');
+  const by=y+Math.round(Math.sin(G.time*2.5)); // 待機の上下動(描画のみ)
+  const OL='#06182e', DK='#11569a', BL='#2280e6', LT='#5cbcff', RIM='#cfeeff', CY='#5ce6ff', WT='#eaffff', M='#7f93ad', MD='#33425e';
+  // 脚(関節分割＋平たい足)
+  px(x-5,by-1,4,4,OL); px(x+1,by-1,4,4,OL);                         // 腿
+  px(x-4,by,2,3,DK); px(x+2,by,2,3,DK);
+  px(x-5,by+3,4,5,OL); px(x+1,by+3,4,5,OL);                         // すね
+  px(x-4,by+4,2,3,MD); px(x+2,by+4,2,3,MD); px(x-4,by+4,2,1,M); px(x+2,by+4,2,1,M);
+  px(x-6,by+8,5,3,OL); px(x+1,by+8,5,3,OL);                         // 足(幅広)
+  px(x-5,by+9,3,1,M); px(x+2,by+9,3,1,M);
+  // 胴(箱型シャーシ＋パネル線＋リベット)
+  px(x-7,by-13,14,12,OL); px(x-6,by-12,12,10,DK); px(x-6,by-12,12,6,BL); px(x-5,by-12,9,2,LT); px(x-6,by-13,12,1,RIM);
+  px(x-6,by-6,12,1,MD);                                             // 継ぎ目
+  pdot(x-5,by-11,LT); pdot(x+3,by-11,LT); pdot(x-5,by-4,MD); pdot(x+3,by-4,MD); // リベット
+  // 肩関節(ピボット)
+  px(x-10,by-12,4,5,OL); px(x+6,by-12,4,5,OL);
+  px(x-9,by-11,2,2,M); px(x+7,by-11,2,2,M); px(x-9,by-11,2,1,LT); px(x+7,by-11,2,1,LT);
+  // 左腕(関節＋ハンド)
+  px(x-10,by-7,3,5,OL); px(x-9,by-6,1,3,MD); px(x-10,by-2,3,2,OL); px(x-9,by-2,1,1,M);
+  // 右腕(アクチュエータ＋2本爪マニピュレータ)
+  px(x+7,by-7,3,5,OL); px(x+8,by-6,1,3,MD);
+  px(x+7,by-2,4,3,OL); px(x+8,by-1,2,1,M);
+  px(x+10,by-3,1,3,OL); px(x+12,by-3,1,3,OL); pdot(x+11,by-3,CY);   // 2本爪＋発光
+  // 中央コア(ハウジング付き)
+  px(x-3,by-10,6,5,OL); px(x-2,by-9,4,3,'#0e3a5a'); pdisc(x,by-7,2,CY); pdot(x,by-7,WT);
+  // 首(機械ネック)
+  px(x-2,by-15,4,2,OL); px(x-2,by-15,4,1,MD);
+  // 頭(箱型センサーユニット＋アンテナ＋光学バンド)
+  px(x-5,by-22,10,8,OL); px(x-4,by-21,8,6,DK); px(x-4,by-21,8,3,BL); px(x-3,by-21,6,1,LT); px(x-4,by-22,8,1,RIM);
+  px(x-4,by-25,2,3,OL); pdot(x-4,by-25,CY);                         // アンテナ
+  pdot(x-4,by-20,M); pdot(x+3,by-20,M);                            // 側面ボルト
+  px(x-4,by-17,8,2,OL); px(x-3,by-16,6,1,CY); px(x,by-16,2,1,WT);  // 光学スキャナーバンド
+  // チャージオーラ（ドット量子化）
+  if(G.p.charging && G.p.charge>0){
+    const f=clamp(G.p.charge/CHARGE.time,0,1);
+    const full=f>=1;
+    const t=G.time*12;
+    const col=full?'#bff6ff':'#5aa0e0';
+    const n=full?8:5;
+    for(let i=0;i<n;i++){ const a=i*(6.283/n)+t; const rad=lerp(6,15,f)+(full?Math.sin(t*2)*2:0);
+      pdot(x+Math.cos(a)*rad,by-6+Math.sin(a)*rad,col); }
+    if(full) pframe(x-12,by-26,24,32,'#bff6ff');
+  }
+}
+function drawEnemy(e){
+  if(e.dead) return;
+  const bob=isBossType(e.type)?Math.sin(G.time*2+e.bob)*1.5:0;
+  const c=cellCenter(e.col,e.row); const x=Math.round(c.x),y=Math.round(c.y+bob);
+  const flashing=e.flash>0 && Math.floor(e.flash*40)%2===0;
+  ctx.globalAlpha=e.invuln?0.4:1;
+  px(x-9,y+7,18,4,'rgba(0,0,0,0.3)');
+  if(e.type==='crawler'){ const OL='#1a0a2e', DK='#5a2a9a', BS='#9a4cff', LT='#c79cff', RIM='#e6c8ff', EY='#ff5af0', EB='#ffd0fa';
+    px(x-9,y-7,18,12,OL); px(x-8,y-6,16,10,DK); px(x-8,y-6,16,6,BS); px(x-7,y-6,14,2,LT); px(x-8,y-7,16,1,RIM);
+    px(x-7,y-10,2,3,OL); px(x+5,y-10,2,3,OL); px(x-1,y-11,2,4,OL); px(x-1,y-11,2,1,LT);   // 角
+    px(x-8,y+4,2,3,OL); px(x+6,y+4,2,3,OL);                                                // 脚スパイク
+    if(!flashing){ px(x-6,y-3,4,3,EY); px(x+2,y-3,4,3,EY); pdot(x-5,y-3,EB); pdot(x+3,y-3,EB); }
+    else{ px(x-6,y-3,4,3,DK); px(x+2,y-3,4,3,DK); } }
+  else if(e.type==='turret'){ const OL='#0e0e16', DK='#5a606e', M='#aab0be', LT='#dfe4ee', RIM='#ffffff', AM='#ffd23c', AB='#fff2c0';
+    px(x-9,y-1,18,7,OL); px(x-8,y,16,5,DK); px(x-8,y,16,2,M); px(x-7,y,14,1,LT);           // 基部
+    px(x-7,y-12,14,11,OL); px(x-6,y-11,12,9,DK); px(x-6,y-11,12,5,M); px(x-5,y-11,10,2,LT); px(x-6,y-12,12,1,RIM); // 砲塔
+    px(x-15,y-8,8,5,OL); px(x-15,y-7,7,3,M); px(x-15,y-7,7,1,LT);                           // バレル(左)
+    px(x-3,y-8,6,4,OL); if(!flashing){ px(x-2,y-7,4,2,AM); pdot(x-1,y-7,AB); } else px(x-2,y-7,4,2,DK); }
+  else if(e.type==='blade'){ const OL='#072014', DK='#1f8a48', GR='#3fd06e', LT='#9cf0b0', RIM='#d8ffe8', WT='#eaffff', EY='#aef0c0';
+    px(x-5,y-13,11,19,OL); px(x-4,y-12,9,17,DK); px(x-4,y-12,9,9,GR); px(x-3,y-12,7,3,LT); px(x-4,y-13,9,1,RIM); // 細身の胴
+    px(x-2,y-16,2,3,OL); px(x-2,y-16,2,2,GR);                                               // 頭角
+    if(!flashing){ px(x-3,y-9,3,2,EY); px(x+1,y-9,3,2,EY); pdot(x-2,y-9,WT); }
+    px(x-13,y-15,4,20,OL); px(x-12,y-14,2,18,WT); px(x-12,y-14,1,18,RIM); px(x-13,y+3,4,3,DK); } // 刀(左)
+  else if(e.type==='mortar'){ const OL='#2a1206', DK='#b85a14', O='#ff9a3c', LT='#ffc488', RIM='#ffe2c0', D='#3a1c08', HOT='#fff2c0';
+    px(x-9,y-2,18,8,OL); px(x-8,y-1,16,6,DK); px(x-8,y-1,16,2,O); px(x-7,y-1,14,1,LT);      // 基部
+    px(x-6,y-11,12,9,OL); px(x-5,y-10,10,7,DK); px(x-5,y-10,10,4,O); px(x-4,y-10,8,2,LT); px(x-5,y-11,10,1,RIM); // 砲body
+    px(x-3,y-15,6,5,OL); px(x-2,y-14,4,4,D); if(!flashing){ px(x-1,y-14,2,3,HOT); pdot(x-1,y-13,'#ffffff'); } } // 上向き砲口
+  else if(e.type==='boss'){
+    const p2=e.phase2;
+    const OL='#2a0805', DK=p2?'#a82414':'#8a1c10', R=p2?'#ff4a2c':'#e23a22', LT=p2?'#ffb47a':'#ff8a5a', RIM=p2?'#ffe0c4':'#ffcaa6', CORE=p2?'#ffd23c':'#ffb02c', CB='#fff2c0', EY=p2?'#fff2a0':'#ffe23c', WT='#ffffff';
+    px(x-13,y+2,26,6,'rgba(0,0,0,0.35)');
+    px(x-8,y+2,6,11,OL); px(x+2,y+2,6,11,OL); px(x-7,y+3,4,8,DK); px(x+3,y+3,4,8,DK); px(x-7,y+3,4,2,R); px(x+3,y+3,4,2,R); // 脚
+    px(x-12,y-16,24,20,OL); px(x-11,y-15,22,18,DK); px(x-11,y-15,22,11,R); px(x-10,y-15,20,3,LT); px(x-11,y-16,22,1,RIM);    // 胴
+    px(x-16,y-15,6,9,OL); px(x+10,y-15,6,9,OL); px(x-15,y-14,4,5,R); px(x+11,y-14,4,5,R); px(x-15,y-15,5,1,RIM); px(x+10,y-15,5,1,RIM); // 肩
+    px(x-6,y-10,12,9,OL); px(x-5,y-9,10,7,'#5a1408'); pdisc(x,y-5,4,CORE); pdisc(x,y-5,2,CB); pdot(x-6,y-5,CORE); pdot(x+5,y-5,CORE); // ファーネス
+    px(x-9,y-29,18,14,OL); px(x-8,y-28,16,12,DK); px(x-8,y-28,16,6,R); px(x-7,y-28,14,2,LT); px(x-8,y-29,16,1,RIM);          // 頭
+    px(x-11,y-32,4,6,OL); px(x+7,y-32,4,6,OL); px(x-11,y-32,3,2,R); px(x+8,y-32,3,2,R); px(x-12,y-35,3,4,OL); px(x+9,y-35,3,4,OL); // ツノ
+    if(!flashing){ px(x-6,y-24,4,3,EY); px(x+2,y-24,4,3,EY); pdot(x-5,y-24,WT); pdot(x+3,y-24,WT); } else{ px(x-6,y-24,4,3,DK); px(x+2,y-24,4,3,DK); }
+    px(x-4,y-19,8,2,'#3a0c06');
+    if(p2){ for(let i=0;i<3;i++){ const a=G.time*5+i*2.1; pdot(x-12+Math.cos(a)*16,y-10+Math.sin(a)*10,'#ff8a3c'); } }
+  }
+  else if(e.type==='omega'){
+    // データ構造体：結晶ボディ＋発光する菱形コア。OVERLOADで赤紫に発光。
+    const p2=e.phase2;
+    const OL='#160a2e', DK=p2?'#5a2a9a':'#3a1c6a', V=p2?'#c24aff':'#8a4ce0', V2=p2?'#e0a0ff':'#b48cf0', RIM='#e6d2ff', CY='#6ad0ff', CYB='#eafaff', CORE=p2?'#ff8af0':'#6ad0ff', WT='#eafaff';
+    px(x-13,y+2,26,6,'rgba(0,0,0,0.35)');
+    px(x-7,y+2,5,11,OL); px(x+2,y+2,5,11,OL); px(x-6,y+3,3,8,DK); px(x+3,y+3,3,8,DK); px(x-6,y+3,3,2,V); px(x+3,y+3,3,2,V); // 脚
+    px(x-12,y-15,24,19,OL); px(x-11,y-14,22,17,DK); px(x-11,y-14,22,10,V); px(x-10,y-14,20,3,V2); px(x-11,y-15,22,1,RIM);   // 胴
+    px(x-12,y-12,2,2,OL); px(x+10,y-12,2,2,OL);                                                                            // 面取り
+    px(x-16,y-13,6,8,OL); px(x+10,y-13,6,8,OL); px(x-15,y-12,4,4,V2); px(x+11,y-12,4,4,V2); px(x-15,y-13,5,1,RIM); px(x+10,y-13,5,1,RIM); pdot(x-13,y-9,CY); pdot(x+12,y-9,CY); // 肩ノード
+    const cy0=y-5; pdisc(x,cy0,4,CORE); pdisc(x,cy0,2,CYB); pdot(x,cy0-6,CORE); pdot(x,cy0+5,CORE); pdot(x-6,cy0,CORE); pdot(x+5,cy0,CORE); // 中央コア(発光菱形)
+    px(x-8,y-28,16,13,OL); px(x-7,y-27,14,11,DK); px(x-7,y-27,14,6,V); px(x-6,y-27,12,2,V2); px(x-7,y-28,14,1,RIM); px(x-5,y-15,10,2,OL); // 頭(逆三角)
+    px(x-9,y-31,4,5,OL); px(x+5,y-31,4,5,OL); px(x-9,y-31,3,1,V2); px(x+6,y-31,3,1,V2);                                    // アンテナ
+    if(!flashing){ px(x-5,y-23,3,3,CY); px(x+2,y-23,3,3,CY); pdot(x-4,y-23,CYB); pdot(x+3,y-23,CYB); } else{ px(x-5,y-23,3,3,DK); px(x+2,y-23,3,3,DK); }
+    px(x-2,y-19,4,2,WT);
+    // 周回するデータ点(OVERLOADで増える)
+    const orbs=p2?4:2; for(let i=0;i<orbs;i++){ const a=G.time*3.2+i*(6.283/orbs); pdot(x+Math.cos(a)*17,y-9+Math.sin(a)*11, i%2?CY:V2); }
+  }
+  // テレグラフ表示（点滅する「!」＝カウンターのチャンス）
+  if(e.tele){ const blink=Math.floor(G.time*12)%2===0;
+    if(blink){ const yy=y-28; px(x-1,yy,2,5,'#ffe23c'); px(x-1,yy+6,2,2,'#ff5a3c'); } }
+  // スタン表示
+  if(e.stun>0){ const t=G.time*10; for(let i=0;i<3;i++){ const a=t+i*2.09; pdot(x+Math.cos(a)*8,y-26+Math.sin(a)*3,'#ffe23c'); } }
+  ctx.globalAlpha=1;
+}
+
+/* ============================ エフェクト / フロート / 環境 ============================ */
+function addFx(kind,pos,col,life){ G.fx.push({kind,x:pos.x,y:pos.y,col,t:0,life,
+  parts:(kind==='delete')?Array.from({length:10},()=>({a:Math.random()*6.283,s:30+Math.random()*40})):null}); }
+function addFloat(txt,pos,col,scale,life){
+  if(G.floats.length>=12) G.floats.shift();        // 同時表示数の上限を厳しめに(画面を埋め尽くさない)(P3)
+  let oy=0;                                         // 近接するフロートとは縦にずらして重なりを避ける
+  for(const f of G.floats){ if(Math.abs(f.x-pos.x)<24 && Math.abs((f.y-f.t*20)-pos.y)<14) oy-=12; }
+  G.floats.push({txt,x:pos.x,y:pos.y+oy,col,t:0,life:life||0.5,scale:scale||1}); // フェード短め(既定0.5s)(P3)
+}
+function drawFx(){
+  for(const f of G.fx){
+    const k=f.t/f.life; ctx.globalAlpha=qa(1-k);
+    if(f.kind==='boom'){ pring(f.x,f.y,lerp(2,15,k),f.col); pdisc(f.x,f.y,lerp(4,1,k),'#ffffff'); }
+    else if(f.kind==='delete'){
+      pring(f.x,f.y,lerp(3,22,k),f.col); pring(f.x,f.y,lerp(1,14,k),'#ffffff');
+      ctx.globalAlpha=qa(1-k*1.3);
+      for(const p of f.parts){ const d=p.s*k; pdot(f.x+Math.cos(p.a)*d,f.y+Math.sin(p.a)*d,f.col); }
+      if(k<0.35){ ctx.globalAlpha=qa(0.6-k); pdisc(f.x,f.y,12,'#ffffff'); }
+    }
+    else if(f.kind==='slash'){ pline(f.x-12,f.y-12,f.x+12,f.y+12,f.col,PXU); pline(f.x+12,f.y-12,f.x-12,f.y+12,'#ffffff',PXU); }
+    else if(f.kind==='heal'){ for(let i=0;i<5;i++){ const a=i*1.256+f.t*6; pdot(f.x+Math.cos(a)*lerp(2,12,k),f.y+Math.sin(a)*lerp(2,12,k),f.col); } }
+    else if(f.kind==='spawn'||f.kind==='area'){ const rad=lerp(14,2,k); pframe(f.x-rad,f.y-rad,rad*2,rad*2,f.col); }
+    else if(f.kind==='muzzle'){ pdisc(f.x,f.y,lerp(2,9,k),'#ffffff'); }
+    else if(f.kind==='pa'){ pring(f.x,f.y,lerp(4,30,k),f.col); pring(f.x,f.y,lerp(2,20,k),'#ffffff'); pcross(f.x,f.y,lerp(6,20,k),f.col); }
+    ctx.globalAlpha=1;
+  }
+  for(const fl of G.floats){
+    const k=fl.t/fl.life; ctx.globalAlpha=qa(1-k);
+    const pop=1+0.5*clamp((0.12-fl.t)/0.12,0,1);
+    const sc=fl.scale*pop;
+    btext(fl.txt, fl.x, fl.y - fl.t*20 - 6, sc, fl.col, 'center', true);
+    ctx.globalAlpha=1;
+  }
+}
+
+/* ============================ サウンド ============================ */
+let AC=null;
+function initAudio(){ if(AC) return; try{ AC=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ AC=null; } }
+function beep(freq,dur,type){ if(!AC||muted) return; try{
+  const o=AC.createOscillator(),g=AC.createGain(); o.type=type||'square'; o.frequency.value=freq;
+  g.gain.value=0.05; o.connect(g); g.connect(AC.destination); const t=AC.currentTime; o.start(t);
+  g.gain.setValueAtTime(0.05,t); g.gain.exponentialRampToValueAtTime(0.0001,t+dur); o.stop(t+dur+0.02);
+}catch(e){} }
+let muted=false;
+
+/* --- 簡易BGM（Web Audioで生成・外部ファイル不使用・先読みスケジューラ） --- */
+const BGM={ on:false, boss:false, step:0, next:0 };
+// 音名→周波数（簡易）
+const NF={C:261.63,D:293.66,E:329.63,F:349.23,G:392.0,A:440.0,B:493.88};
+function nf(name,oct){ const b=NF[name[0]]; const s=name.includes('#')?1.0595:1; return b*Math.pow(2,(oct-4))*s; }
+// 16ステップのパターン（道中=明るめペンタ / ボス=緊張感マイナー）
+const BASS_N = ['A','A','E','E','F','F','C','C','D','D','A','A','E','E','G','G'];
+const ARP_N  = ['A','C','E','A','E','C','A','C','F','A','C','F','C','A','G','E'];
+const BASS_B = ['A','A','A','G','F','F','F','E','D','D','D','C','E','E','G#','G#'];
+const ARP_B  = ['A','E','A','C','G','D','G','A','F','C','F','A','E','B','E','G#'];
+function bgmVoice(freq,t,dur,type,vol){ if(!AC||muted) return; try{
+  const o=AC.createOscillator(),g=AC.createGain(); o.type=type; o.frequency.value=freq;
+  o.connect(g); g.connect(AC.destination); g.gain.setValueAtTime(0.0001,t);
+  g.gain.linearRampToValueAtTime(vol,t+0.01); g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+  o.start(t); o.stop(t+dur+0.02);
+}catch(e){} }
+function bgmStep(i,t){
+  const boss=BGM.boss; const bass=boss?BASS_B:BASS_N, arp=boss?ARP_B:ARP_N;
+  bgmVoice(nf(bass[i],boss?2:2)/1, t, boss?0.16:0.2, 'triangle', 0.10); // ベース
+  if(i%2===0) bgmVoice(nf(arp[i],4), t, 0.12, 'square', 0.035); // アルペジオ
+  if(i%4===0) bgmVoice(120, t, 0.04, 'square', 0.03); // キック代わり
+  if(boss && i%2===1) bgmVoice(nf(arp[i],5), t, 0.06, 'square', 0.02);
+}
+function bgmTempo(){ return BGM.boss?0.135:0.16; } // 1ステップ秒
+function bgmSchedule(){
+  if(!AC || !BGM.on || muted) return;
+  const ahead=AC.currentTime+0.25;
+  if(BGM.next<AC.currentTime) BGM.next=AC.currentTime+0.02;
+  while(BGM.next<ahead){ bgmStep(BGM.step%16,BGM.next); BGM.next+=bgmTempo(); BGM.step++; }
+}
+function bgmStart(boss){ BGM.boss=!!boss; if(!BGM.on){ BGM.on=true; BGM.step=0; BGM.next=0; } }
+function bgmStop(){ BGM.on=false; }
+function toggleMute(){ muted=!muted; if(muted) bgmStop(); else { if(G.state===ST.BATTLE) bgmStart(BGM.boss); } updateMuteBtn(); }
+function updateMuteBtn(){ try{ const b=document.getElementById('mute'); if(b) b.textContent='BGM: '+(muted?'OFF':'ON'); }catch(e){} }
+function toggleFx(){ SET.fx=!SET.fx; saveAll(); updateSetBtns(); beep(SET.fx?900:300,0.06); }
+function cycleShake(){ SET.shake = SET.shake>=1 ? 0.5 : (SET.shake>=0.5 ? 0 : 1); saveAll(); updateSetBtns(); beep(700,0.05); }
+function shakeLabel(){ return SET.shake>=1?'STRONG':(SET.shake>=0.5?'WEAK':'OFF'); }
+function updateSetBtns(){ try{
+  const f=document.getElementById('fxbtn'); if(f) f.textContent='FX:'+(SET.fx?'ON':'OFF');
+  const s=document.getElementById('shakebtn'); if(s) s.textContent='SHAKE:'+shakeLabel();
+}catch(e){} }
+
+/* ============================ 敵AI ============================ */
+function updateEnemies(dt){
+  for(const e of G.enemies){
+    if(e.dead) continue;
+    if(e.flash>0) e.flash-=dt;
+    if(e.moveCd>0) e.moveCd-=dt;
+    if(e.stun>0){ e.stun-=dt; continue; } // スタン中は行動凍結
+    e.t-=dt;
+    if(e.type==='crawler') aiCrawler(e,dt);
+    else if(e.type==='turret') aiTurret(e,dt);
+    else if(e.type==='blade') aiBlade(e,dt);
+    else if(e.type==='mortar') aiMortar(e,dt);
+    else if(e.type==='boss') aiBoss(e,dt);
+    else if(e.type==='omega') aiOmega(e,dt);
+    // テレグラフ中(=カウンター可能)の判定。無敵中は対象外。
+    e.tele = (!e.invuln) && (
+      (e.type==='crawler'&&e.phase==='visible') ||
+      (e.type==='turret' &&e.phase==='aim') ||
+      (e.type==='mortar' &&e.phase==='aim'));
+  }
+}
+function aiCrawler(e){
+  if(e.phase==='visible'){ e.invuln=false;
+    if(e.t<=0){ G.shots.push({owner:'e',fx:e.col-0.4,row:e.row,vx:evx(EVX.shock),dmg:edmg(EDMG.shock),pierce:false,hitSet:new Set(),kind:'shock',r:4,col:'#ff5c6e'});
+      beep(300,0.1,'sawtooth'); e.phase='hide'; e.t=(0.9+Math.random()*0.6)*e.aggro; e.invuln=true; }
+  } else { e.invuln=true;
+    if(e.t<=0){ e.row=clamp(G.p.row+rint(-1,1),0,ROWS-1); let c=e.home; if(!standable(c,e.row)) c=G.enemyMinCol;
+      e.col=clamp(c,G.enemyMinCol,COLS-1); e.phase='visible'; e.t=0.7+Math.random()*0.5; e.invuln=false; } }
+}
+function aiTurret(e){
+  e.invuln=false;
+  if(e.phase==='idle'){ if(G.p.row===e.row){ e.phase='aim'; e.t=0.7*e.aggro; beep(420,0.05); } }
+  else if(e.phase==='aim'){ if(e.t<=0){ G.shots.push({owner:'e',fx:e.col-0.4,row:e.row,vx:evx(EVX.cannon),dmg:edmg(EDMG.cannon),pierce:false,hitSet:new Set(),kind:'cannon',r:3,col:'#ff8a2c'});
+      beep(260,0.12,'square'); e.phase='cool'; e.t=0.8*e.aggro; } }
+  else if(e.phase==='cool'){ if(e.t<=0) e.phase='idle'; }
+}
+function aiBlade(e){
+  if(e.phase==='wander'){ e.invuln=false;
+    if(e.t<=0){ if(Math.random()<0.55){ const nr=clamp(e.row+choice([-1,1]),0,ROWS-1); if(standable(e.col,nr)) e.row=nr; e.t=(0.6+Math.random()*0.6)*e.aggro; }
+      else { e.phase='telegraph'; e.t=0.6; } } }
+  else if(e.phase==='telegraph'){ e.invuln=true;
+    if(e.t<=0){ e.row=G.p.row; e.col=G.enemyMinCol;
+      addStrike({owner:'e',cells:[[clamp(G.playerMaxCol,0,COLS-1),e.row]],warn:ewarn(0.18),hit:0.2,dmg:edmg(EDMG.slash),kind:'slash',col:'#9cf0b0'});
+      beep(360,0.1,'sawtooth'); e.phase='retreat'; e.t=0.5; } }
+  else if(e.phase==='retreat'){ e.invuln=false;
+    if(e.t<=0){ e.col=clamp(e.home,G.enemyMinCol,COLS-1); e.phase='wander'; e.t=(0.7+Math.random()*0.6)*e.aggro; } }
+}
+function aiMortar(e){
+  e.invuln=false;
+  if(e.phase==='idle'){ if(e.t<=0){ const cells=[];
+      for(let c=0;c<=G.playerMaxCol;c++) for(let r=0;r<ROWS;r++) if(standable(c,r)) cells.push([c,r]);
+      e._tgt=cells.length?choice(cells):[0,1];
+      e.phase='aim'; e.t=0.42*e.aggro; beep(420,0.06); } }   // 狙いを定める予備動作（カウンター可）
+  else if(e.phase==='aim'){ if(e.t<=0){
+      addStrike({owner:'e',cells:[e._tgt],warn:ewarn(0.8),hit:0.25,dmg:edmg(EDMG.bomb),kind:'bomb',col:'#ffb060'});
+      beep(340,0.08); e.phase='cool'; e.t=(1.35+Math.random()*0.7)*e.aggro; } }
+  else if(e.phase==='cool'){ if(e.t<=0) e.phase='idle'; }
+}
+function aiBoss(e,dt){
+  if(e.phase==='recover'){
+    e.invuln=false;
+    // FURY移行：HP50%以下で1回だけ。撃破(hp<=0/dead)とは相打ちさせない
+    if(!e.phase2 && !e.dead && e.hp>0 && e.hp<=e.maxHp*0.5){
+      e.phase2=true; G.furyT=0.3;
+      G.hitstop=Math.max(G.hitstop,hs(0.3)); G.flashScreen=Math.max(G.flashScreen,fl(0.3)); G.shake=Math.max(G.shake,0.45);
+      addFloat('FURY MODE',cellCenter(e.col,e.row-0.6),'#ff8a3c',2); beep(180,0.3,'sawtooth'); beep(90,0.35,'sawtooth'); }
+    if(e.t<=0){
+      // 盤面を移動（行・列とも敵陣内で）
+      if(Math.random()<0.6){ const nr=clamp(rint(0,2),0,2); if(standable(e.col,nr)) e.row=nr; }
+      if(Math.random()<0.45){ const nc=clamp(G.enemyMinCol+rint(0,COLS-1-G.enemyMinCol),G.enemyMinCol,COLS-1); if(standable(nc,e.row)) e.col=nc; }
+      let atk;
+      if(e.phase2){ const n=4; atk=rint(0,n-1); if(atk===e._lastAtk) atk=(atk+1)%n; } // FURY=4種からランダム
+      else atk=e.bossAtkIndex%3;                                                       // 通常=学習しやすい固定順(3種)
+      e._lastAtk=atk; e.bossAtkIndex++;
+      let dur;
+      if(atk===0) dur=bossFlame(e); else if(atk===1) dur=bossMeteor(e); else if(atk===2) dur=bossCross(e); else dur=bossHoming(e);
+      e.phase='attack'; e.invuln=true; e.attackTimer=dur;
+    }
+  } else if(e.phase==='attack'){
+    e.invuln=true; e.attackTimer-=dt;
+    if(e.attackTimer<=0){ e.phase='recover'; e.invuln=false; e.t=(e.phase2?0.85:1.3)*DIFF.aggro; }
+  }
+}
+function ensureSafe(danger){
+  const reach=reachableCells();
+  if(reach.some(([c,r])=>!danger.has(c+','+r))) return; // 到達圏内に安全マスあり
+  const stand=allyStandCells(); if(!stand.length) return;
+  let t = reach.length ? reach.slice().sort((a,b)=>a[0]-b[0]||a[1]-b[1])[0]
+                       : (stand.sort((a,b)=>a[0]-b[0]||a[1]-b[1]), stand[0]);
+  danger.delete(t[0]+','+t[1]);
+}
+/* 予告(warn)時間を計算。各攻撃の「初回使用時のみ」1.4倍に延ばし(P3)、初見の理不尽を緩和する。
+   key = 攻撃種別の識別子。2回目以降は通常速度に戻る。最低0.5秒を保証。 */
+function bw(e,key,base){
+  e._used = e._used || {};
+  const first = !e._used[key]; e._used[key]=true;
+  return Math.max(0.5, ewarn(base) * (first?1.4:1));
+}
+function bossFlame(e){
+  const rows=e.phase2?2:1; const pick=shuffle([0,1,2]).slice(0,rows);
+  const danger=new Set(),cells=[];
+  // 難易度別の退避レーン：EASY=2列/NORMAL=1列/HARD=0列を自陣側で必ず空ける(明確な逃げ場)
+  const freeCols = DIFF.key==='EASY'?2 : (DIFF.key==='NORMAL'?1 : 0);
+  const safeCols = new Set();
+  for(let i=0;i<freeCols && i<=G.playerMaxCol;i++) safeCols.add(G.playerMaxCol-i); // 手前(左)の列から空ける
+  for(const r of pick){ for(let c=0;c<COLS;c++){ if(c<=G.playerMaxCol && safeCols.has(c)) continue; cells.push([c,r]); if(c<=G.playerMaxCol) danger.add(c+','+r); } }
+  ensureSafe(danger);
+  const fc=cells.filter(([c,r])=>c>G.playerMaxCol||danger.has(c+','+r));
+  const warn=bw(e,'flame',e.phase2?0.65:0.8);
+  addStrike({owner:'e',cells:fc,warn,hit:0.3,dmg:edmg(EDMG.flame),kind:'flame',col:'#ff6a3c'});
+  beep(200,0.2,'sawtooth'); return warn+0.3+0.1;
+}
+function bossMeteor(e){
+  const stand=[]; for(let c=0;c<=G.playerMaxCol;c++) for(let r=0;r<ROWS;r++) if(standable(c,r)) stand.push([c,r]);
+  const k=Math.min(stand.length-1,(e.phase2?6:5)+DIFF.meteor);
+  const tgt=shuffle(stand).slice(0,Math.max(1,k));
+  const danger=new Set(tgt.map(([c,r])=>c+','+r)); ensureSafe(danger);
+  const cells=tgt.filter(([c,r])=>danger.has(c+','+r));
+  const warn=bw(e,'meteor',e.phase2?0.8:1.0);
+  addStrike({owner:'e',cells,warn,hit:0.25,dmg:edmg(EDMG.meteor),kind:'meteor',col:'#ff4a5a'});
+  beep(240,0.15,'sawtooth'); return warn+0.25+0.1;
+}
+function bossCross(e){
+  const danger=new Set(),cells=[];
+  for(let c=0;c<COLS;c++){ cells.push([c,e.row]); if(c<=G.playerMaxCol) danger.add(c+','+e.row); }
+  const cx=clamp(G.playerMaxCol,0,COLS-1);
+  for(let r=0;r<ROWS;r++){ cells.push([cx,r]); danger.add(cx+','+r); }
+  ensureSafe(danger);
+  const fc=cells.filter(([c,r])=>c>G.playerMaxCol||danger.has(c+','+r));
+  const warn=bw(e,'cross',e.phase2?0.55:0.7);
+  addStrike({owner:'e',cells:fc,warn,hit:0.25,dmg:edmg(EDMG.cross),kind:'cross',col:'#ff7a5c'});
+  beep(180,0.22,'sawtooth'); return warn+0.25+0.1;
+}
+function bossHoming(e){
+  // 自機の現在行をロックオン → 予告 → その行を薙ぐ（別の行へ動けば回避できる）
+  const row=G.p.row; const danger=new Set(),cells=[];
+  for(let c=0;c<COLS;c++){ cells.push([c,row]); if(c<=G.playerMaxCol) danger.add(c+','+row); }
+  ensureSafe(danger);
+  const fc=cells.filter(([c,r])=>c>G.playerMaxCol||danger.has(c+','+r));
+  const warn=bw(e,'homing',e.phase2?0.62:0.78);
+  addStrike({owner:'e',cells:fc,warn,hit:0.25,dmg:edmg(EDMG.cross),kind:'cross',col:'#ff5a4a'});
+  beep(260,0.16,'sawtooth'); beep(160,0.16,'sawtooth'); return warn+0.25+0.1;
+}
+
+/* ============================ EXボス OMEGA（縦＝列ロック軸） ============================ */
+/* INFERNO が「行(横)」中心なのに対し、OMEGA は「列(縦)」を封じる攻撃が主体。
+   全攻撃は addStrike 経由＝ensureGlobalSafe により必ず到達可能な安全マスが残る(詰み無し)。
+   予告マーカーは視認性ルールに従い赤橙固定(addStrike の warning 色は固定)。自走弾は持たない。 */
+function aiOmega(e,dt){
+  if(e.phase==='recover'){
+    e.invuln=false;
+    // OVERLOAD(FURY相当)：HP50%以下で1回だけ。撃破との相打ちを防ぐ
+    if(!e.phase2 && !e.dead && e.hp>0 && e.hp<=e.maxHp*0.5){
+      e.phase2=true; G.furyT=0.3;
+      G.hitstop=Math.max(G.hitstop,hs(0.3)); G.flashScreen=Math.max(G.flashScreen,fl(0.3)); G.shake=Math.max(G.shake,0.45);
+      addFloat('OVERLOAD',cellCenter(e.col,e.row-0.6),'#c79cff',2); beep(200,0.3,'square'); beep(120,0.35,'sawtooth'); }
+    if(e.t<=0){
+      if(Math.random()<0.6){ const nr=clamp(rint(0,2),0,2); if(standable(e.col,nr)) e.row=nr; }
+      if(Math.random()<0.45){ const nc=clamp(G.enemyMinCol+rint(0,COLS-1-G.enemyMinCol),G.enemyMinCol,COLS-1); if(standable(nc,e.row)) e.col=nc; }
+      let atk;
+      if(e.phase2){ const n=4; atk=rint(0,n-1); if(atk===e._lastAtk) atk=(atk+1)%n; } // OVERLOAD=4種
+      else atk=e.bossAtkIndex%3;                                                       // 通常=学習しやすい固定順(3種)
+      e._lastAtk=atk; e.bossAtkIndex++;
+      let dur;
+      if(atk===0) dur=omegaColumns(e); else if(atk===1) dur=omegaTrack(e); else if(atk===2) dur=omegaFrost(e); else dur=omegaNova(e);
+      e.phase='attack'; e.invuln=true; e.attackTimer=dur;
+    }
+  } else if(e.phase==='attack'){
+    e.invuln=true; e.attackTimer-=dt;
+    if(e.attackTimer<=0){ e.phase='recover'; e.invuln=false; e.t=(e.phase2?0.85:1.3)*DIFF.aggro; }
+  }
+}
+/* COLUMN CRUSH：自陣の列を丸ごと封鎖(通常1列/OVERLOAD2列)。空き列へ横移動して回避。 */
+function omegaColumns(e){
+  const k = e.phase2?2:1;                                  // 封鎖する自陣列の数(最大でも3-1=2列まで→必ず1列残る)
+  const cols = shuffle(Array.from({length:G.playerMaxCol+1},(_,i)=>i)).slice(0,k);
+  const danger=new Set(),cells=[];
+  for(const c of cols){ for(let r=0;r<ROWS;r++){ cells.push([c,r]); danger.add(c+','+r); } }
+  ensureSafe(danger);
+  const fc=cells.filter(([c,r])=>danger.has(c+','+r));
+  const warn=bw(e,'col',e.phase2?0.72:0.9);
+  addStrike({owner:'e',cells:fc,warn,hit:0.3,dmg:edmg(EDMG.flame),kind:'flame',col:'#a86aff'});
+  beep(170,0.2,'square'); beep(110,0.18,'sawtooth'); return warn+0.3+0.1;
+}
+/* DATA LOCK：自機が「今いる列」を狙ってロック→封鎖。別の列へ動けば回避(追尾系=横の駆け引き)。 */
+function omegaTrack(e){
+  const col=clamp(G.p.col,0,G.playerMaxCol); const danger=new Set(),cells=[];
+  for(let r=0;r<ROWS;r++){ cells.push([col,r]); danger.add(col+','+r); }
+  ensureSafe(danger);
+  const fc=cells.filter(([c,r])=>danger.has(c+','+r));
+  const warn=bw(e,'track',e.phase2?0.6:0.78);
+  addStrike({owner:'e',cells:fc,warn,hit:0.25,dmg:edmg(EDMG.cross),kind:'cross',col:'#7a6aff'});
+  beep(240,0.14,'square'); beep(150,0.14,'sawtooth'); return warn+0.25+0.1;
+}
+/* GLITCH FIELD：自陣を市松模様で危険化。安全マスは必ず隣接(1マス移動で到達可)。 */
+function omegaFrost(e){
+  const parity = rint(0,1); const danger=new Set(),cells=[];
+  for(let c=0;c<=G.playerMaxCol;c++) for(let r=0;r<ROWS;r++){ if(((c+r)&1)===parity){ cells.push([c,r]); danger.add(c+','+r); } }
+  ensureSafe(danger);
+  const fc=cells.filter(([c,r])=>danger.has(c+','+r));
+  const warn=bw(e,'frost',e.phase2?0.66:0.82);
+  addStrike({owner:'e',cells:fc,warn,hit:0.25,dmg:edmg(EDMG.meteor),kind:'meteor',col:'#6ad0ff'});
+  beep(300,0.12,'square'); beep(200,0.12,'sawtooth'); return warn+0.25+0.1;
+}
+/* OVERLOAD NOVA(OVERLOAD専用)：自機の現在列の隣接1列だけを安全にして他を全封鎖。必ず1マス以内に逃げ場。 */
+function omegaNova(e){
+  const safeCol = clamp(G.p.col + rint(-1,1), 0, G.playerMaxCol); // 退避先は現在列の±1(到達保証)
+  const danger=new Set(),cells=[];
+  for(let c=0;c<=G.playerMaxCol;c++){ if(c===safeCol) continue; for(let r=0;r<ROWS;r++){ cells.push([c,r]); danger.add(c+','+r); } }
+  ensureSafe(danger);
+  const fc=cells.filter(([c,r])=>danger.has(c+','+r));
+  const warn=bw(e,'nova',0.92);
+  addStrike({owner:'e',cells:fc,warn,hit:0.3,dmg:edmg(EDMG.meteor),kind:'meteor',col:'#c79cff'});
+  beep(150,0.26,'sawtooth'); beep(90,0.3,'sawtooth'); return warn+0.3+0.12;
+}
+
+/* ============================ 更新（弾・ストライク・地雷・FX） ============================ */
+function updateShots(dt){
+  for(const s of G.shots){
+    s.fx+=(s.owner==='p'?s.vx:-s.vx)*dt;
+    if(s.owner==='p'){
+      for(const e of G.enemies){ if(e.dead||e.invuln) continue; if(e.row!==s.row) continue; if(s.hitSet.has(e)) continue;
+        if(Math.abs(s.fx-(e.col+0.5))<0.45){ damageEnemy(e,s.dmg);
+          if(s.pierce){ s.hitSet.add(e); } else { s.dead=true; addFx('boom',cellCenter(e.col,e.row),s.col,0.25); break; } } }
+    } else {
+      if(G.p.row===s.row && Math.abs(s.fx-(G.p.col+0.5))<0.45){ damagePlayer(s.dmg); s.dead=true; }
+    }
+    if(s.fx<-0.5||s.fx>COLS+0.5) s.dead=true;
+  }
+  G.shots=G.shots.filter(s=>!s.dead);
+}
+function updateStrikes(dt){
+  for(const s of G.strikes){
+    s.t+=dt;
+    if(!s.applied){
+      if(s.t>=s.warn){
+        if(s.owner==='e'){
+          if(G.p.iframe<=0 && s.cells.some(([c,r])=>c===G.p.col&&r===G.p.row)) damagePlayer(s.dmg);
+          for(const [c,r] of s.cells) addFx('boom',cellCenter(c,r),s.col,0.3);
+        } else {
+          for(const e of G.enemies){ if(e.dead||e.invuln) continue; if(s.cells.some(([c,r])=>c===e.col&&r===e.row)){ damageEnemy(e,s.dmg); if(s.stun && !isBossType(e.type)) e.stun=Math.max(e.stun,s.stun); } }
+          for(const [c,r] of s.cells) addFx(s.kind==='slash'?'slash':'boom',cellCenter(c,r),s.col,0.3);
+        }
+        s.applied=true; s.t=0; s.phase='hit';
+      }
+    } else { if(s.t>=s.hit) s.done=true; }
+  }
+  G.strikes=G.strikes.filter(s=>!s.done);
+}
+function updateMines(dt){
+  for(const m of G.mines){ m.t-=dt;
+    for(const e of G.enemies){ if(e.dead||e.invuln) continue; if(e.col===m.col&&e.row===m.row){ damageEnemy(e,m.dmg);
+      addFx('boom',cellCenter(m.col,m.row),m.col_,0.4); m.done=true; break; } }
+    if(m.t<=0) m.done=true; }
+  G.mines=G.mines.filter(m=>!m.done);
+}
+function updateFx(dt){
+  for(const f of G.fx){ f.t+=dt; if(f.t>=f.life) f.done=true; }
+  G.fx=G.fx.filter(f=>!f.done);
+  for(const fl of G.floats){ fl.t+=dt; if(fl.t>=fl.life) fl.done=true; }
+  G.floats=G.floats.filter(f=>!f.done);
+}
+function updatePanels(dt){
+  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){ const p=G.panels[r][c];
+    if(p.type==='hole'){ p.regen-=dt; if(p.regen<=0) p.type='normal'; } }
+}
+function updateEmbers(dt){
+  const lb=liveBoss();
+  if(lb && Math.random()<0.4){
+    const omega=lb.type==='omega';
+    G.embers.push({x:rint(20,VW-20),y:VH-30,vy:-(10+Math.random()*20),t:0,life:1.6,
+      col: omega ? (Math.random()<0.5?'#7a6aff':'#6ad0ff') : (Math.random()<0.5?'#ff7a3c':'#ffb060')}); }
+  for(const p of G.embers){ p.t+=dt; p.y+=p.vy*dt; p.x+=Math.sin(p.t*4)*0.3; if(p.t>=p.life) p.done=true; }
+  G.embers=G.embers.filter(p=>!p.done);
+}
+
+/* ============================ 移動（氷の滑り含む） ============================ */
+function tryMovePlayer(dc,dr){
+  let nc=G.p.col+dc, nr=G.p.row+dr;
+  if(nc<0||nc>G.playerMaxCol||nr<0||nr>=ROWS) return;
+  if(!standable(nc,nr)) return;
+  const from=G.panels[G.p.row][G.p.col];
+  G.p.col=nc; G.p.row=nr;
+  if(from.type==='crack'){ from.type='hole'; from.regen=4.0; }
+  // 氷：着地マスが氷なら同方向へ更に滑る
+  let slides=0;
+  while(G.panels[G.p.row][G.p.col].type==='ice' && slides<3){
+    const tc=G.p.col+dc, tr=G.p.row+dr;
+    if(tc<0||tc>G.playerMaxCol||tr<0||tr>=ROWS) break;
+    if(!standable(tc,tr)) break;
+    const f2=G.panels[G.p.row][G.p.col];
+    G.p.col=tc; G.p.row=tr;
+    if(f2.type==='crack'){ f2.type='hole'; f2.regen=4.0; }
+    slides++;
+  }
+  G.p.moveCd=PLAYER.moveCd;
+}
+
+/* ============================ バトル更新 ============================ */
+function updateBattle(dt){
+  const p=G.p;
+  if(p.iframe>0) p.iframe-=dt;
+  if(p.flash>0) p.flash-=dt;
+  if(p.moveCd>0) p.moveCd-=dt;
+  if(p.busterCd>0) p.busterCd-=dt;
+  if(G._chipCd>0) G._chipCd-=dt;
+  if(G.shake>0) G.shake-=dt;
+  if(G.flashScreen>0) G.flashScreen-=dt;
+  if(p.charging) p.charge+=dt;
+  if(G.chainT>0){ G.chainT-=dt; if(G.chainT<=0){ G.chainT=0; G.chain=0; } }
+  if(G.cutin){ G.cutin.t+=dt; if(G.cutin.t>=G.cutin.life) G.cutin=null; }
+  if(G.furyT>0) G.furyT-=dt;
+
+  // アウトロ演出中（クリア/ボス撃破スロー/敗北）：入力と敵AIを凍結し、
+  // 撃破の爆散・CLEAR・被弾の手応えを見せ切ってから結果画面へ遷移する。
+  if(G.outroKind){
+    updateShots(dt); updateStrikes(dt); updateMines(dt); updateFx(dt); updateEmbers(dt); updatePanels(dt);
+    G.outroT-=dt;
+    if(G.outroT<=0){
+      if(G.outroKind==='victory') enterVictory();
+      else if(G.outroKind==='gameover') enterGameOver();
+      else enterResult();
+    }
+    return;
+  }
+
+  if(p.moveCd<=0){
+    if(held.up) tryMovePlayer(0,-1);
+    else if(held.down) tryMovePlayer(0,1);
+    else if(held.left) tryMovePlayer(-1,0);
+    else if(held.right) tryMovePlayer(1,0);
+  }
+  if(!G.customReady){ G.customGauge+=dt; if(G.customGauge>=CUSTOM_FILL){ G.customGauge=CUSTOM_FILL; G.customReady=true; beep(720,0.06); } }
+
+  updateEnemies(dt); updateShots(dt); updateStrikes(dt); updateMines(dt); updateFx(dt); updatePanels(dt); updateEmbers(dt);
+
+  if(G.enemies.every(e=>e.dead)){
+    // 即遷移せず、アウトロへ。ボスは撃破スローと爆散を見せ切る。
+    G.p.iframe=Math.max(G.p.iframe,2.0); // 演出中の流れ弾による事故死を防止
+    if(G.wave>=G.finalWave){ G.outroKind='victory'; G.outroT=0.85; }      // 最終ボス撃破：爆散＋CLEAR→勝利
+    else if(isBossWave(G.wave)){ G.outroKind='result'; G.outroT=0.85; }   // 中間ボス(EX時のINFERNO)も撃破スローを見せる
+    else { G.outroKind='result'; G.outroT=0.45; }                         // 通常ウェーブ：最後のDELETEを見せる
+    return;
+  }
+  if(p.hp<=0){ G.p.iframe=Math.max(G.p.iframe,2.0); G.outroKind='gameover'; G.outroT=0.5; return; } // 被弾の手応えを見せてからGAME OVER
+}
+function enterResult(){
+  // クリアボーナス＋残HPボーナス
+  G.score += 300 + Math.max(0,Math.ceil(G.p.hp))*2;
+  // 成績連動ドロップ：このウェーブの残HPが高い(=被弾が少ない)ほど良いチップが出る
+  const hpRatio = G.p.hp/PLAYER.maxHp;
+  const rarePool=['LONG','BACK','RAIN','CLUSTER','TERRITORY','WIDE','SURGE'];
+  const midBoss = isBossWave(G.wave) && G.wave < G.finalWave; // EXモード時のINFERNO中間撃破
+  let r;
+  if(midBoss){ r=[choice(['BACK','LONG','SURGE']), choice(['L','S','*'])]; } // 中間ボス＝確定レアドロップ
+  else if(hpRatio>=0.70){ r=[choice(rarePool), choice(['S','*','L'])]; }     // 好成績＝レア寄り
+  else { r=choice(BASE_FOLDER); }
+  const wasNew = !DISCOVERED[r[0]];               // 図鑑初登録か(リザルトのNEW!表示用)
+  G.reward={id:r[0],code:r[1],isNew:wasNew};
+  G.folder.push([r[0],r[1]]);
+  discover(r[0]);
+  if(hpRatio>=0.85) discover(choice(rarePool)); // ほぼ無傷なら収集ボーナス
+  G.outroKind=null; G.outroT=0;
+  G.state=ST.RESULT; G.stateT=0; beep(990,0.18); beep(1320,0.12);
+}
+function enterVictory(){
+  G.score += 600 + Math.max(0,Math.ceil(G.p.hp))*3; // ボス撃破ボーナス＋残HP
+  G._newBest = commitBest(G.score);
+  G.report = clearReport();     // 内訳付きクリアレポート(クリア時のみS+〜Cが付く)
+  G.bustRank = G.report.rank;
+  commitRank(G.bustRank);       // 現在系列(通常/EX)のベストランクを更新(P2)
+  // 実績解放(P4)：条件を満たすメダルを付与（重複付与は unlockAch 側で抑止）
+  if(G.diffName==='EASY')    unlockAch('clearE');
+  if(G.diffName==='NORMAL')  unlockAch('clearN');
+  if(G.diffName==='HARD')    unlockAch('clearH');
+  if(isExRun())              unlockAch('clearEX');
+  if((G.runDamage||0)<=0)    unlockAch('flawless');
+  if(G.report.rank==='S+')   unlockAch('perfect');
+  if((G.runPA||0)>=3)        unlockAch('paAdept');
+  if((G.runMaxCombo||0)>=5)  unlockAch('chainer');
+  if(libComplete())          unlockAch('master');
+  if(!EX_UNLOCKED){ EX_UNLOCKED=true; G._exJustUnlocked=true; saveAll(); } // 初回クリアでEXボス解放(永続)
+  G.outroKind=null; G.outroT=0;
+  G.state=ST.VICTORY; G.stateT=0; G.shake=0; G.flashScreen=0;
+  bgmStop(); beep(700,0.12); beep(900,0.12); beep(1200,0.2);
+}
+function enterGameOver(){
+  G._newBest = commitBest(G.score);
+  G.outroKind=null; G.outroT=0;
+  G.state=ST.GAMEOVER; G.stateT=0; G.shake=0; G.flashScreen=0;
+  bgmStop(); beep(120,0.4,'sawtooth');
+}
+function retryWave(){
+  G.usedContinue = true;        // リトライ＝コンティニュー使用 → Sランク不可(P1)
+  G.score = G._waveStartScore;  // スコアの不正な水増しを防ぐため、ウェーブ開始時点へ巻き戻す
+  startWave(G.wave);
+}
+
+/* バスター */
+function busterPress(){
+  if(G.state!==ST.BATTLE) return;
+  if(G.cutin){ G.cutin.t = Math.min(G.cutin.life, G.cutin.t + 0.3); } // 連打でカットイン短縮
+  if(G.outroKind) return;                        // アウトロ演出中は発射しない
+  if(busterDown) return;
+  busterDown=true; G.p.charging=true; G.p.charge=0;
+  if(G.p.busterCd<=0){ spawnShot({fx:G.p.col+0.6,row:G.p.row,vx:BUSTER.vx,dmg:BUSTER.dmg,kind:'buster',col:'#bfe9ff',r:2});
+    G.p.busterCd=BUSTER.cd; beep(880,0.03,'square'); }
+}
+function busterRelease(){
+  if(!busterDown) return; busterDown=false;
+  if(G.state===ST.BATTLE && G.p.charging && G.p.charge>=CHARGE.time){
+    spawnShot({fx:G.p.col+0.6,row:G.p.row,vx:CHARGE.vx,dmg:CHARGE.dmg,kind:'charge',col:'#7df0ff',r:5});
+    addFx('muzzle',cellCenter(G.p.col,G.p.row),'#bff6ff',0.18); G.shake=Math.max(G.shake,0.12); beep(1200,0.12); beep(700,0.1);
+  }
+  G.p.charging=false; G.p.charge=0;
+}
+
+/* ============================ 描画：フィールド ============================ */
+function ditherFill(a,b,cc,d,base,dark){
+  // 簡易ディザ：面を base で塗り、ドットで dark を散らす
+  ctx.fillStyle=base;
+  ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.lineTo(cc.x,cc.y); ctx.lineTo(d.x,d.y); ctx.closePath(); ctx.fill();
+}
+function drawPanelQuad(c,r){
+  const u0=c/COLS,u1=(c+1)/COLS,v0=r/ROWS,v1=(r+1)/ROWS;
+  const a=fieldPoint(u0,v0),b=fieldPoint(u1,v0),cc=fieldPoint(u1,v1),d=fieldPoint(u0,v1);
+  const p=G.panels[r][c]; const ally=c<=G.playerMaxCol;
+  if(p.type==='hole'){ ctx.fillStyle='#04050b';
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.lineTo(cc.x,cc.y); ctx.lineTo(d.x,d.y); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle='#10121d'; ctx.lineWidth=1; ctx.stroke(); return; }
+  const glow=0.5+0.5*Math.sin(G.time*2 + (c+r));
+  let base,edge,dot;
+  if(p.type==='ice'){ base=ally?'#3a6e9a':'#6a3a44'; edge='#bff0ff'; dot='#bfe8ff'; }
+  else if(p.type==='crack'){ base=ally?'#2a4e7a':'#7a2e3a'; edge=ally?'#4a78b0':'#b04a58'; dot=ally?'#1b3050':'#50202a'; }
+  else { base=ally?'#2f5e96':'#963a44'; edge=ally?'#5a92d0':'#d05a68'; dot=ally?'#244a78':'#7a2c34'; }
+  ditherFill(a,b,cc,d,base,dot);
+  // ディザリング（ドット階調で陰影：上辺寄り=明 / 下辺寄り=暗）
+  const m=fieldPoint((u0+u1)/2,(v0+v1)/2);
+  const lite = ally?'#7ab0e0':'#e07a86';
+  const topP=fieldPoint((u0+u1)/2,v0+0.18);
+  const botP=fieldPoint((u0+u1)/2,v1-0.18);
+  ctx.fillStyle=lite;
+  ctx.fillRect(Math.round(topP.x-6),Math.round(topP.y),2,2);
+  ctx.fillRect(Math.round(topP.x+2),Math.round(topP.y+2),2,2);
+  ctx.fillRect(Math.round(topP.x-1),Math.round(topP.y-2),2,2);
+  ctx.fillStyle=dot;
+  ctx.fillRect(Math.round(m.x-6),Math.round(m.y-2),2,2);
+  ctx.fillRect(Math.round(m.x+4),Math.round(m.y+2),2,2);
+  ctx.fillRect(Math.round(m.x-1),Math.round(m.y+4),2,2);
+  ctx.fillRect(Math.round(botP.x+5),Math.round(botP.y),2,2);
+  ctx.fillRect(Math.round(botP.x-4),Math.round(botP.y+1),2,2);
+  // 枠（発光）
+  ctx.strokeStyle=edge; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.lineTo(cc.x,cc.y); ctx.lineTo(d.x,d.y); ctx.closePath(); ctx.stroke();
+  if(p.type==='ice'){ ctx.strokeStyle='rgba(220,245,255,0.7)'; ctx.lineWidth=1; ctx.beginPath();
+    ctx.moveTo(a.x+4,a.y+3); ctx.lineTo(cc.x-4,cc.y-3); ctx.stroke(); }
+  if(p.type==='crack'){ ctx.strokeStyle=edge; ctx.lineWidth=1; ctx.beginPath();
+    ctx.moveTo(a.x,a.y); ctx.lineTo(m.x,m.y); ctx.lineTo(cc.x,cc.y); ctx.moveTo(d.x,d.y); ctx.lineTo(m.x,m.y); ctx.lineTo(b.x,b.y); ctx.stroke(); }
+  // パネル発光（ボス時は強め。OMEGAは紫系）
+  const lb=liveBoss();
+  if(lb){ const omega=lb.type==='omega'; ctx.globalAlpha=0.10*glow; ctx.fillStyle=ally?'#5aa0ff':(omega?'#9a6aff':'#ff6a5a');
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.lineTo(cc.x,cc.y); ctx.lineTo(d.x,d.y); ctx.closePath(); ctx.fill(); ctx.globalAlpha=1; }
+}
+function drawField(){
+  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++) drawPanelQuad(c,r);
+  const t=fieldPoint(G.enemyMinCol/COLS,0), b=fieldPoint(G.enemyMinCol/COLS,1);
+  ctx.strokeStyle='rgba(255,255,255,0.15)'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(t.x,t.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+}
+/* P2: 攻撃予告を2層に分離する。
+   drawStrikeTint = 床のタイル塗り(キャラの下に描く)。
+   drawStrikeMarkers = 着弾予告マーカー(最前面に描く＝ダメージ数値/コンボ/エフェクト/カットインに隠れない)。 */
+function drawStrikeTint(){
+  for(const s of G.strikes){
+    const warning=!s.applied; const enemy=(s.owner==='e');
+    for(const [c,r] of s.cells){
+      const u0=c/COLS,u1=(c+1)/COLS,v0=r/ROWS,v1=(r+1)/ROWS;
+      const a=fieldPoint(u0,v0),b=fieldPoint(u1,v0),cc=fieldPoint(u1,v1),d=fieldPoint(u0,v1);
+      if(warning){ const blink=Math.floor(s.t*12)%2===0;
+        ctx.globalAlpha=enemy?(blink?0.5:0.25):(blink?0.45:0.2);
+        ctx.fillStyle=enemy?'#ff3a2c':'#46d8ff';
+      } else {
+        ctx.globalAlpha=enemy?0.6:0.55; ctx.fillStyle=enemy?'#ff8a2c':'#9cf0ff';
+      }
+      ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.lineTo(cc.x,cc.y); ctx.lineTo(d.x,d.y); ctx.closePath(); ctx.fill();
+      ctx.globalAlpha=1;
+    }
+  }
+}
+function drawStrikeMarkers(){
+  for(const s of G.strikes){
+    const warning=!s.applied; const enemy=(s.owner==='e');
+    for(const [c,r] of s.cells){
+      const u0=c/COLS,u1=(c+1)/COLS,v0=r/ROWS,v1=(r+1)/ROWS;
+      const mid=fieldPoint((u0+u1)/2,(v0+v1)/2);
+      if(warning){ const blink=Math.floor(s.t*12)%2===0;
+        const mk=enemy?'#ff5a3c':'#7df0ff';            // 視認性ルール：敵=赤橙 / 自機=水色
+        pcross(mid.x,mid.y,9,mk,2);
+        pframe(mid.x-9,mid.y-7,18,14,blink?mk:'#ffffff',2);
+        if(enemy && blink) pframe(mid.x-7,mid.y-5,14,10,'#ffd23c',2);
+      } else {
+        pdisc(mid.x,mid.y,8,enemy?'#ffd23c':'#ffffff');
+      }
+    }
+  }
+}
+function drawShots(){
+  for(const s of G.shots){ const pt=fxPoint(s.fx,s.row);
+    const enemy=(s.owner==='e'); const back=enemy?1:-1;
+    const core=enemy?'#ffcf9a':'#dffbff'; // 敵=暖色芯 / 自機=寒色芯（白は使わない）
+    if(s.kind==='charge'){
+      for(let i=1;i<=3;i++) pdot(pt.x+i*3*back,pt.y,'#7df0ff');
+      pdisc(pt.x,pt.y,s.r,'#9be8ff'); pring(pt.x,pt.y,s.r+1,'#46c8ff'); pdisc(pt.x,pt.y,Math.max(1,s.r-2),core);
+    } else if(s.kind==='shock'||s.kind==='wave'){
+      const h=s.r*4; px(pt.x-3,pt.y-h/2,6,h,'#16060e'); px(pt.x-2,pt.y-h/2+1,4,h-2,s.col); px(pt.x-1,pt.y-h/2+1,2,h-2,core);
+    } else {
+      const R=Math.max(3,s.r);
+      for(let i=1;i<=2;i++) pdot(pt.x+i*3*back,pt.y,enemy?'#ff8a3c':'#7df0ff');
+      px(pt.x-R-1,pt.y-R-1,(R+1)*2,(R+1)*2,'#160610');
+      pdisc(pt.x,pt.y,R,s.col); pdisc(pt.x,pt.y,Math.max(1,R-2),core);
+    }
+  }
+}
+function drawMines(){
+  for(const m of G.mines){ const pt=cellCenter(m.col,m.row); const blink=Math.floor(m.t*6)%2===0;
+    px(pt.x-5,pt.y-3,10,6,'#1a0e06'); px(pt.x-4,pt.y-2,8,4,m.col_); if(blink) px(pt.x-1,pt.y-1,2,2,'#fff'); }
+}
+function drawEmbers(){ for(const p of G.embers){ ctx.globalAlpha=qa(1-p.t/p.life); pdot(p.x,p.y,p.col); ctx.globalAlpha=1; } }
+
+/* ============================ HUD ============================ */
+function bar(x,y,w,h,frac,fill,back){ px(x-1,y-1,w+2,h+2,'#0a0a14'); px(x,y,w,h,back||'#222a3a'); px(x,y,Math.round(w*clamp(frac,0,1)),h,fill); }
+function chipIcon(x,y,size,def){
+  px(x,y,size,size,'#05070d');                 // 外枠（濃色）
+  px(x+1,y+1,size-2,size-2,def.col);           // カラーパネル
+  const MC='#0a0d16';                          // モチーフ色（濃色＝どの地色でも視認可能）
+  const R=(fx,fy,fw,fh,c)=>px(x+fx*size, y+fy*size, Math.max(1,Math.round(fw*size)), Math.max(1,Math.round(fh*size)), c||MC);
+  switch(def.id){
+    case 'PULSE': // 直進弾→：シャフト＋三角の矢じり
+      R(0.16,0.44,0.42,0.12); R(0.58,0.34,0.09,0.32); R(0.66,0.40,0.09,0.20); R(0.74,0.46,0.09,0.08); break;
+    case 'RAPID': // 連射：横ダッシュ×3
+      R(0.16,0.46,0.16,0.10); R(0.40,0.46,0.16,0.10); R(0.64,0.46,0.16,0.10); break;
+    case 'BLADE': // 単発斬撃：斜め「／」
+      R(0.18,0.66,0.16,0.16); R(0.34,0.50,0.16,0.16); R(0.50,0.34,0.16,0.16); R(0.66,0.18,0.16,0.16); break;
+    case 'WIDE': // 縦3斬撃：左に3行マーカー＋「／」
+      R(0.16,0.20,0.09,0.60); R(0.25,0.24,0.09,0.10); R(0.25,0.45,0.09,0.10); R(0.25,0.66,0.09,0.10);
+      R(0.40,0.62,0.15,0.15); R(0.55,0.44,0.15,0.15); R(0.70,0.26,0.15,0.15); break;
+    case 'LONG': // 2マス先斬撃：「／」＋リーチ「》」
+      R(0.12,0.62,0.15,0.15); R(0.27,0.44,0.15,0.15); R(0.42,0.26,0.15,0.15);
+      R(0.62,0.40,0.08,0.08); R(0.70,0.48,0.08,0.08); R(0.62,0.56,0.08,0.08);
+      R(0.78,0.40,0.08,0.08); R(0.86,0.48,0.08,0.08); R(0.78,0.56,0.08,0.08); break;
+    case 'REPAIR': // 回復：太い「＋」
+      R(0.42,0.16,0.16,0.68); R(0.16,0.42,0.68,0.16); break;
+    case 'TERRITORY': // 自陣前進：壁＋右矢印
+      R(0.16,0.18,0.12,0.64); R(0.30,0.44,0.32,0.12);
+      R(0.60,0.36,0.08,0.28); R(0.68,0.42,0.08,0.16); R(0.76,0.47,0.08,0.06); break;
+    case 'TRAP': // 地雷：ひし形◆
+      R(0.44,0.18,0.12,0.12); R(0.32,0.30,0.36,0.12); R(0.20,0.42,0.60,0.16); R(0.32,0.58,0.36,0.12); R(0.44,0.70,0.12,0.12); break;
+    case 'SURGE': // 衝撃波：波形（イコライザ状）
+      R(0.20,0.32,0.10,0.36); R(0.38,0.22,0.10,0.56); R(0.56,0.30,0.10,0.40); R(0.74,0.40,0.10,0.22); break;
+    case 'RAIN': // 落下：下矢印↓×3
+      R(0.20,0.20,0.08,0.34); R(0.14,0.54,0.20,0.07); R(0.19,0.61,0.10,0.07);
+      R(0.46,0.20,0.08,0.34); R(0.40,0.54,0.20,0.07); R(0.45,0.61,0.10,0.07);
+      R(0.72,0.20,0.08,0.34); R(0.66,0.54,0.20,0.07); R(0.71,0.61,0.10,0.07); break;
+    case 'CLUSTER': // 爆発：8方向バースト✳
+      R(0.42,0.42,0.16,0.16); R(0.46,0.16,0.08,0.26); R(0.46,0.58,0.08,0.26);
+      R(0.16,0.46,0.26,0.08); R(0.58,0.46,0.26,0.08);
+      R(0.27,0.27,0.10,0.10); R(0.63,0.27,0.10,0.10); R(0.27,0.63,0.10,0.10); R(0.63,0.63,0.10,0.10); break;
+    case 'BACK': // 背後斬撃：「＼」＋最後列の縦バー
+      R(0.16,0.18,0.15,0.15); R(0.31,0.34,0.15,0.15); R(0.46,0.50,0.15,0.15); R(0.61,0.66,0.15,0.15);
+      R(0.80,0.16,0.08,0.66); break;
+    default:
+      if(def.cat==='heal'){ R(0.42,0.16,0.16,0.68); R(0.16,0.42,0.68,0.16); }
+      else if(def.cat==='blade'||def.cat==='back'){ R(0.20,0.64,0.16,0.16); R(0.42,0.42,0.16,0.16); R(0.64,0.20,0.16,0.16); }
+      else if(def.cat==='shot'||def.cat==='wave'){ R(0.16,0.44,0.46,0.12); R(0.62,0.36,0.08,0.28); R(0.70,0.42,0.08,0.16); }
+      else { R(0.28,0.28,0.44,0.44); }
+  }
+}
+function drawHUD(){
+  const p=G.p;
+  // 自機HP（バーの右に数値 → カスタムゲージと重ならない）
+  btext('AZURE',10,4,1,'#7df0ff','left',true);
+  bar(10,13,128,10,p.hp/PLAYER.maxHp,'#46c8ff');
+  btext(Math.max(0,Math.ceil(p.hp))+'/'+PLAYER.maxHp,144,15,1,'#dfefff','left',true);
+  // 敵/ボスHP
+  const boss=liveBoss();
+  if(boss){ const omega=boss.type==='omega';
+    const nm = omega ? (boss.phase2?'OMEGA OVERLOAD':'OMEGA') : (boss.phase2?'INFERNO FURY':'INFERNO');
+    btext(nm,374,4,1, omega?'#c79cff':'#ff9a6a','right',true);
+    bar(214,13,160,10,boss.hp/boss.maxHp, boss.phase2?(omega?'#c24aff':'#ff8a2c'):(omega?'#9a5cff':'#ff5a3c'));
+    // FURY/OVERLOAD発動ライン(HP50%)の目印：第2形態移行を予告し、駆け引きを読めるようにする
+    if(!boss.phase2){ const fx=214+Math.round(160*0.5); px(fx-1,11,2,14,'#ffe23c'); px(fx-2,9,4,2,'#ffe23c'); } }
+  else { for(const e of G.enemies){ if(e.dead) continue; const pt=cellCenter(e.col,e.row);
+      bar(pt.x-12,pt.y-34,24,3,e.hp/e.maxHp,'#ff6a5a','#3a2030'); } }
+  // カスタムゲージ（独立した行 y=27）
+  bar(10,27,150,6,G.customGauge/CUSTOM_FILL,G.customReady?'#ffe23c':'#3a86d0');
+  if(G.customReady){ if(Math.floor(G.time*3)%2===0) btext('CUSTOM READY [C]',166,27,1,'#ffe23c','left',true); }
+  else btext('CUSTOM',166,27,1,'#5a7090','left',true);
+  // チャージバー（自機足元）
+  if(p.charging && p.charge>0){ const f=clamp(p.charge/CHARGE.time,0,1); const pt=cellCenter(p.col,p.row);
+    bar(pt.x-10,pt.y+12,20,3,f,f>=1?'#7df0ff':'#3a86d0'); }
+  // チップ列
+  btext('CHIP',10,200,1,'#bfffe0','left',true);
+  let qx=42;
+  for(let i=0;i<G.queue.length;i++){ const q=G.queue[i];
+    if(q.pa){ px(qx-1,195,30,16,'#0a0a14'); px(qx,196,28,14,'#ff3a8c'); btext('PA',qx+8,200,1,'#fff','left',true);
+      if(i===0){ pframe(qx-1,195,32,16,'#fff',1); } qx+=34; continue; }
+    const def=CHIPS[q.id]; chipIcon(qx,196,14,def);
+    if(i===0){ pframe(qx-1,195,16,16,'#fff',1); }
+    btext(q.code,qx+3,213,1,'#fff','left',true); qx+=20; }
+  if(G.queue.length===0) jtext('(なし) Cでカスタム',42,208,'#5a7090',8);
+  // コンボ・カウンター表示（V10：現在のCOUNTER数を常時表示し、達成感を即時フィードバック）(P2)
+  btext('COUNTER '+G.runCounters,300,190,1,'#ffe23c','left',true);
+  if(G.comboCount>=2 && G.queue.length>0) btext('COMBO X'+G.comboCount,300,200,1,'#ffd23c','left',true);
+  if(muted) btext('MUTE',192,4,1,'#ff8a8a','center',true);
+}
+
+/* ============================ 背景 ============================ */
+function drawBG(boss){
+  px(0,0,VW,VH,'#06080f');
+  const lb=liveBoss(); const omega=lb&&lb.type==='omega';
+  const off=Math.floor((G.time*30)%24);
+  ctx.globalAlpha=boss?0.18:0.13; ctx.fillStyle=boss?(omega?'#3a2a78':'#a02828'):'#285a96';
+  for(let i=-1;i<12;i++){ const y=i*24+off; for(let x=0;x<VW;x+=8) ctx.fillRect(x,y,4,2); }
+  ctx.globalAlpha=1;
+  if(boss){ const g=0.5+0.5*Math.sin(G.time*3); ctx.globalAlpha=qa(0.16*g); ctx.fillStyle=omega?'#7a4aff':'#ff4a3c';
+    for(let y=40;y<188;y+=4) for(let x=118;x<272;x+=4){ if((((x+y)>>2)&1)===0) ctx.fillRect(x,y,2,2); }
+    ctx.globalAlpha=1; }
+}
+
+/* ============================ バトルシーン ============================ */
+function drawBattleScene(faded){
+  const boss=isBossType_live();
+  drawBG(boss);
+  let ox=0,oy=0;
+  if(!faded && G.shake>0){ const m=G.shake*SET.shake; ox=(Math.random()-0.5)*7*m; oy=(Math.random()-0.5)*7*m; }
+  G._ox = faded?0:ox; G._oy = faded?0:oy;   // 予告マーカーを同じ揺れで最前面描画するため保持
+  ctx.save(); ctx.translate(ox,oy);
+  if(boss) drawEmbers();
+  drawField(); drawStrikeTint();            // 床のタイル塗りはキャラの下(P2)
+  for(let r=0;r<ROWS;r++){
+    const list=G.enemies.filter(e=>!e.dead&&e.row===r).sort((a,b)=>a.col-b.col);
+    for(const e of list) drawEnemy(e);
+    if(G.p.row===r) drawPlayer();
+  }
+  drawMines(); drawShots(); drawFx();
+  ctx.restore();
+  if(!faded){
+    if(SET.fx && G.flashScreen>0){ ctx.globalAlpha=qa(Math.min(G.flashScreen*3,0.6)); ctx.fillStyle='#fff'; ctx.fillRect(0,0,VW,VH); ctx.globalAlpha=1; }
+    drawHUD();
+  }
+}
+function isBossType_live(){ return !!liveBoss(); } // ボス戦か(背景・残響演出の切替に使用)
+
+/* ============================ 画面 ============================ */
+function drawTitle(){
+  drawBG(false);
+  btext('GRID NAVI',VW/2,26,3,'#7df0ff','center',true);
+  btext('BATTLE V15',VW/2,54,3,'#bfe3ff','center',true);
+  btext('AZURE.EXE',VW/2,82,1,'#5aa0e0','center',true);
+  // 解放状況バッジ
+  if(EX_UNLOCKED && Math.floor(G.time*2)%2===0) btext('* EX MODE AVAILABLE *',VW/2,96,0.9,'#c79cff','center',true);
+  if(libComplete()) btext('* DATA MASTER *',VW/2,106,0.85,'#ffe23c','center',true);
+  if(Math.floor(G.time*2)%2===0) btext('PRESS Z / TAP TO START',VW/2,120,1.2,'#ffe23c','center',true);
+  let yy=138;
+  btext('BEST  E '+BEST_TABLE.EASY+'  N '+BEST_TABLE.NORMAL+'  H '+BEST_TABLE.HARD,VW/2,yy,0.78,'#9fd0ff','center',true); yy+=11;
+  btext('RANK  E '+RANK_TABLE.EASY+'  N '+RANK_TABLE.NORMAL+'  H '+RANK_TABLE.HARD,VW/2,yy,0.78,'#9fd0ff','center',true); yy+=11;
+  if(EX_UNLOCKED){ btext('EX    E '+BEST_EX.EASY+'  N '+BEST_EX.NORMAL+'  H '+BEST_EX.HARD,VW/2,yy,0.78,'#c79cff','center',true); yy+=11; } // EX別枠ベスト(P2)
+  jtext('実績 '+achCount()+'/'+ACHIEVEMENTS.length+'   図鑑 '+libCount()+'/'+Object.keys(CHIPS).length,VW/2,yy+1,'#9fd0ff',8,'center'); yy+=13;
+  jtext('X=図鑑  C=実績  M=BGM  F=演出  V=シェイク',VW/2,yy,'#8fb0d0',8,'center'); yy+=12;
+  jtext('FX:'+(SET.fx?'ON':'OFF')+'  SHAKE:'+shakeLabel()+'  BGM:'+(muted?'OFF':'ON'),VW/2,yy,'#5a90c0',8,'center');
+}
+/* チップ図鑑(P4)：入手済みは色付き、未入手はシルエット。
+   カーソルで1枚を選ぶと下部に説明文・入手元・NEW!を表示。全12種コンプリートで金枠＋称号。 */
+function libCols(){ return 4; }
+function libCellRects(){
+  const ids=Object.keys(CHIPS), cols=libCols(), out=[];
+  for(let i=0;i<ids.length;i++){ const c=i%cols, rw=(i/cols)|0; const cx=48+c*96, top=52+rw*44;
+    out.push({i,id:ids[i],cx,top,x:cx-16,y:top-3,w:32,h:42}); }
+  return out;
+}
+function drawLibrary(){
+  drawBG(false);
+  const ids=Object.keys(CHIPS); const total=ids.length; const got=libCount(); const complete=libComplete();
+  if(complete){ pframe(2,2,VW-4,VH-4,'#ffe23c',2); pframe(5,5,VW-10,VH-10,'#7a5a10',2); } // コンプリート金枠
+  btext('CHIP LIBRARY',VW/2,14,2,'#7df0ff','center',true);
+  if(complete && Math.floor(G.time*3)%2===0) btext('* DATA MASTER  '+got+'/'+total+' COMPLETE *',VW/2,36,0.95,'#ffe23c','center',true);
+  else btext(got+' / '+total+' DISCOVERED',VW/2,36,1,'#9fd0ff','center',true);
+  const cells=libCellRects();
+  if(G.libCursor<0) G.libCursor=0; if(G.libCursor>=total) G.libCursor=total-1;
+  for(const cell of cells){
+    const id=cell.id, def=CHIPS[id], cx=cell.cx, top=cell.top, sel=(cell.i===G.libCursor);
+    if(sel){ pframe(cx-15,top-2,30,40,'#7df0ff',1); }
+    if(DISCOVERED[id]){
+      chipIcon(cx-9,top,18,def);
+      if(NEWLY[id] && Math.floor(G.time*4)%2===0){ px(cx+5,top-2,12,7,'#ff3a6a'); btext('N',cx+8,top-2,0.8,'#fff','left',false); } // NEW!バッジ
+      jtext(def.jp,cx,top+32, sel?'#ffffff':'#d4e6ff', 10,'center');   // 和名のみを1行で大きく表示（英名コードは下部の詳細パネルに集約し、ラベル同士の重なりを解消）
+    } else {
+      px(cx-9,top,18,18,'#141c2c'); pframe(cx-9,top,18,18,'#2a3a54',1);
+      btext('?',cx,top+5,1.2,'#3e5070','center',true);
+      btext('???',cx,top+27,0.85,'#46587a','center',true);   // 「？」アイコンと和名表示位置に合わせて再配置（発見済みセルと縦位置を整合）
+    }
+  }
+  // 詳細パネル（選択中チップ）
+  const selId=ids[G.libCursor], selDef=CHIPS[selId];
+  px(14,184,VW-28,36,'#0a1322'); pframe(14,184,VW-28,36,'#274058',1);
+  if(DISCOVERED[selId]){
+    btext(selId,22,188,0.9,selDef.col,'left',true);
+    if(NEWLY[selId]){ px(22+btextWidth(selId,0.9)+6,188,16,8,'#ff3a6a'); btext('NEW',22+btextWidth(selId,0.9)+8,188,0.7,'#fff','left',false); }
+    jtext(selDef.jp+' ／ '+selDef.desc, 22, 204, '#cfe3ff', 9);
+    jtext('入手元: '+(selDef.src||'—'), 22, 215, '#8fb0d0', 8);
+  } else {
+    btext('???',22,188,0.9,'#5a7090','left',true);
+    jtext('未入手 ／ ウェーブをクリアすると入手できます', 22, 205, '#6f8aa8', 9);
+  }
+  if(Math.floor(G.time*2)%2===0) jtext('方向キー/タップ=選択 ・ Z/B=タイトルへ',VW/2,228,'#e8f4ff',9,'center');
+}
+const DIFF_DESC={
+  EASY:'攻撃ゆるめ・弾速おそめ・予告長め',
+  NORMAL:'標準的な歯ごたえ',
+  HARD:'手数多め・弾速はやめ・予告短め'
+};
+function diffRects(){
+  const out=[]; const w=180,h=32,x=(VW-w)/2;
+  for(let i=0;i<3;i++) out.push({x,y:54+i*40,w,h,key:DIFF_ORDER[i]});
+  return out;
+}
+function exRect(){ const w=180; return {x:(VW-w)/2, y:176, w, h:18}; }
+function drawDifficulty(){
+  drawBG(false);
+  btext('SELECT DIFFICULTY',VW/2,22,1.8,'#7df0ff','center',true);
+  const rects=diffRects();
+  for(let i=0;i<rects.length;i++){ const r=rects[i]; const sel=(i===G.diffIndex);
+    const d=DIFFS[r.key];
+    px(r.x-2,r.y-2,r.w+4,r.h+4, sel?'#ffe23c':'#16243a');
+    px(r.x,r.y,r.w,r.h, sel?'#143a5a':'#0c1626');
+    if(sel) pframe(r.x,r.y,r.w,r.h,'#7df0ff',2);
+    btext(d.name, r.x+12, r.y+5, 1.5, sel?'#ffe23c':'#bfe3ff','left',true);
+    jtext(d.jp, r.x+r.w-10, r.y+9, sel?'#fff':'#8fb0d0', 10, 'right');
+    jtext(DIFF_DESC[r.key], r.x+12, r.y+27, sel?'#dfefff':'#6f8aa8', 8);
+    if(G.exMode && EX_UNLOCKED) jtext('EX '+(BEST_EX[r.key]||0), r.x+r.w-10, r.y+27, sel?'#c79cff':'#6f5a8a', 8, 'right'); // EX系列ベスト(P2)
+    else jtext('BEST '+(BEST_TABLE[r.key]||0), r.x+r.w-10, r.y+27, sel?'#ffe23c':'#6f8aa8', 8, 'right');
+  }
+  // EXボス トグル
+  const er=exRect();
+  if(EX_UNLOCKED){
+    const on=G.exMode;
+    px(er.x-2,er.y-2,er.w+4,er.h+4, on?'#9a5cff':'#16243a');
+    px(er.x,er.y,er.w,er.h, on?'#2a1a55':'#0c1626');
+    pframe(er.x,er.y,er.w,er.h, on?'#c79cff':'#3a4e6a',1);
+    btext('EX OMEGA', er.x+10, er.y+5, 1.0, on?'#c79cff':'#8fb0d0','left',true);
+    btext(on?'ON':'OFF', er.x+er.w-10, er.y+5, 1.2, on?'#ffe23c':'#6f8aa8','right',true);
+    jtext('[E]/タップ', er.x+er.w/2-2, er.y+13, '#6f8aa8', 7, 'center');
+  } else {
+    px(er.x,er.y,er.w,er.h,'#0c1626'); pframe(er.x,er.y,er.w,er.h,'#26303f',1);
+    btext('EX OMEGA', er.x+10, er.y+5, 1.0, '#3e5070','left',true);
+    jtext('初回クリアで解放', er.x+er.w-10, er.y+9, '#3e5070', 8, 'right');
+  }
+  jtext('↑↓/タップで難易度 ・ Z/B で決定'+(EX_UNLOCKED?' ・ E でEX切替':''),VW/2,206,'#8fb0d0',8,'center');
+  if(G.exMode && EX_UNLOCKED) jtext('EXモード：INFERNO撃破後、OMEGA(縦＝列ロック)が出現',VW/2,220,'#c79cff',8,'center');
+  else if(Math.floor(G.time*2)%2===0) jtext('どの難易度でも回避不能にはなりません',VW/2,220,'#5a7090',8,'center');
+}
+function chooseDifficulty(){ G.state=ST.HELP; G.stateT=0; beep(880,0.08); beep(1180,0.06); }
+function drawHelp(){
+  drawBG(false);
+  btext('HOW TO PLAY',VW/2,14,2,'#7df0ff','center',true);
+  const L=[
+    '移動 : 方向キー / WASD / 画面の十字ボタン',
+    'ショット : Z または B (連射可) ／ チャージ : 長押しで離す',
+    'チップ使用 : X または CHIP (確定順に発動)',
+    'カスタム : C または CUST (ゲージ満タンで開く)',
+    '  選択ルール = 同名 または 同コード (*は万能) / 最大5枚',
+    '  同名2枚以上でCOMBO強化 / 同名3枚 or B+W+L で P.A.(必殺技)',
+    'COUNTER : 敵頭上の「!」の間に攻撃→威力UP＆怯み＆加点',
+    'CHAIN : 短時間に連続撃破するとボーナス加点',
+    '視認性 : 自機弾=水色 / 敵の攻撃・着弾予告=赤橙',
+    'パネル : 通常 / ひび割れ(離れると穴) / 穴 / 氷(滑る)',
+    'タイトルで X=チップ図鑑 ／ F=演出 ／ V=シェイク強度',
+    'M=BGMミュート ・ バスターのみでも全クリ可能です'
+  ];
+  for(let i=0;i<L.length;i++) jtext(L[i],22,38+i*13,'#bfe3ff',9);
+  if(G.exMode && EX_UNLOCKED) jtext('EX : INFERNO撃破後にOMEGA出現。縦(列)の封鎖を横移動で回避',VW/2,196,'#c79cff',8,'center');
+  btext('DIFFICULTY: '+(DIFFS[DIFF_ORDER[G.diffIndex]].name)+((G.exMode&&EX_UNLOCKED)?'  +EX':''),VW/2,206,1.2,'#ffe23c','center',true);
+  if(Math.floor(G.time*2)%2===0) btext('PRESS Z / TAP TO BATTLE',VW/2,224,1.3,'#ffe23c','center',true);
+}
+function drawResult(){
+  drawBattleScene(true);
+  ctx.fillStyle='rgba(4,6,12,0.78)'; ctx.fillRect(0,0,VW,VH);
+  const t=G.stateT;
+  const midBoss = isBossWave(G.wave) && G.wave < G.finalWave;
+  btext(midBoss?(G.lastBossName==='OMEGA'?'INFERNO DOWN':'INFERNO DELETED'):('WAVE '+G.wave+' CLEAR'),VW/2,44,midBoss?1.8:2.2,'#7dff9a','center',true);
+  if(midBoss) jtext('— 次は EXボス OMEGA —',VW/2,62,'#c79cff',9,'center');
+  if(t>=0.35) btext('HP  '+Math.max(0,Math.ceil(G.p.hp))+'/'+PLAYER.maxHp,VW/2,86,1.3,'#bfe3ff','center',true);
+  if(t>=0.65) btext('SCORE  '+G.score,VW/2,108,1.3,'#ffe23c','center',true);
+  if(t>=0.95 && G.reward){ btext('GET CHIP',VW/2,130,1.1,'#ffe23c','center',true);
+    const def=CHIPS[G.reward.id]; chipIcon(VW/2-34,144,16,def);
+    btext(G.reward.id+' ['+G.reward.code+']',VW/2-12,148,1.1,'#fff','left',true);
+    if(G.reward.isNew && Math.floor(G.time*4)%2===0){ px(VW/2+58,144,20,9,'#ff3a6a'); btext('NEW',VW/2+61,145,0.8,'#fff','left',false); }
+    jtext(def.jp+' ／ '+def.desc,VW/2,176,'#bfe3ff',8,'center'); }
+  if(t>=1.45 && Math.floor(G.time*2)%2===0) btext('PRESS Z / TAP',VW/2,202,1.2,'#e8f4ff','center',true);
+}
+function drawCurtain(title,sub,col,sc){
+  ctx.fillStyle='rgba(4,6,12,0.74)'; ctx.fillRect(0,0,VW,VH);
+  btext(title,VW/2,VH/2-22,sc||3,col,'center',true);
+  if(sub && Math.floor(G.time*2)%2===0) btext(sub,VW/2,VH/2+18,1.3,'#e8f4ff','center',true);
+}
+/* GAME OVER：戦闘HUDを隠し、結果表示に専念（リトライ導線あり） */
+function drawGameOver(){
+  drawBattleScene(true);                 // faded=true → HUD非表示・画面揺れ無し
+  ctx.fillStyle='rgba(4,6,12,0.80)'; ctx.fillRect(0,0,VW,VH);
+  const t=G.stateT;
+  btext('GAME OVER',VW/2,30,2.6,'#ff6a6a','center',true);
+  btext('WAVE '+G.wave+' FAILED',VW/2,52,1.1,'#ff9a9a','center',true);
+  if(t>=0.45) btext('HP   0/'+PLAYER.maxHp,VW/2,76,1.2,'#bfe3ff','center',true);
+  if(t>=0.80) btext('SCORE   '+G.score,VW/2,96,1.3,'#ffd23c','center',true);
+  if(t>=1.15) btext('BEST    '+BEST_SCORE,VW/2,114,1.1,'#9fd0ff','center',true);
+  if(t>=1.15 && G._newBest && Math.floor(G.time*4)%2===0) btext('* NEW BEST! *',VW/2,130,1.0,'#ffe23c','center',true);
+  // ランクは「クリア時のみ」付与。失敗時は明確に未評価と示す(P1：失敗とクリアを差別化)
+  if(t>=1.55){ btext('RANK  -',VW/2,152,1.8,'#6f8aa8','center',true);
+    jtext('未クリア ・ クリアするとランクが付きます',VW/2,172,'#8fb0d0',9,'center'); }
+  if(t>=1.95) btext('DIFFICULTY: '+G.diffName,VW/2,188,1.0,'#8fb0d0','center',true);
+  if(t>=2.25 && Math.floor(G.time*2)%2===0) btext('PRESS Z / TAP : RETRY',VW/2,210,1.2,'#e8f4ff','center',true);
+}
+/* BOSS DOWN!（勝利リザルト）：最終HP・スコア・ランク・ベスト → タイトルへ */
+function drawVictory(){
+  drawBattleScene(true);                 // faded=true → HUD非表示
+  ctx.fillStyle='rgba(4,6,12,0.86)'; ctx.fillRect(0,0,VW,VH);
+  const t=G.stateT, rp=G.report||{}, clearTime=Math.max(0,G.time-(G.runStart||0));
+  const bn=G.lastBossName||'INFERNO', omega=(bn==='OMEGA');
+  btext(omega?'OMEGA DOWN!':'BOSS DOWN!',VW/2,16,2.3,'#7dff9a','center',true);
+  btext(omega?'EX OMEGA DELETED':(bn+' DELETED'),VW/2,38,1.0, omega?'#c79cff':'#ff9a6a','center',true);
+  if(t>=0.35) btext('SCORE '+G.score+'   BEST '+BEST_SCORE,VW/2,54,0.95,'#ffe23c','center',true);
+  if(t>=0.35 && G._newBest && Math.floor(G.time*4)%2===0) btext('* NEW BEST! *',VW/2,66,0.85,'#ffe23c','center',true);
+  // バスティングランク（クリア時のみ。Sはノーコンティニュー必須）
+  if(t>=0.7){ btext('RANK',VW/2-44,86,1.0,'#bfe3ff','center',true);
+    const rk=rp.rank||'-';
+    if(rk==='S+'){ const pul=0.6+0.4*Math.abs(Math.sin(G.time*4));   // 最上位S+は金色パルス発光で強調(P1)
+      ctx.save(); ctx.globalAlpha=pul; ctx.shadowColor='#ffe23c'; ctx.shadowBlur=14;
+      btext('S+',VW/2+26,79,3.2,'#fff5c0','center',false); ctx.restore();
+      if(Math.floor(G.time*3)%2===0) btext('PERFECT',VW/2+26,104,0.85,'#ffe23c','center',true); }
+    else btext(rk,VW/2+26,79,3.2, rankColor(rk),'center',true); }
+  // 内訳グリッド（各軸 ◎/○/△ ＋ 実数値）
+  if(t>=1.05){
+    const gx=88, gy=112, rowh=14;
+    const rows=[['TIME', rp.gTime, clearTime.toFixed(0)+'S'],
+                ['DAMAGE', rp.gDmg, ''+(rp.dmg||0)],
+                ['COUNTER', rp.gCnt, ''+(rp.cnt||0)],
+                ['COMBO', rp.gCmb, 'X'+(rp.cmb||0)],
+                ['P.A.', rp.gPA, ''+(rp.pa||0)]];
+    for(let i=0;i<rows.length;i++){ const y=gy+i*rowh;
+      btext(rows[i][0], gx, y, 0.9, '#9fd0ff','left',true);
+      jtext(rows[i][1]||'△', gx+92, y+8, gradeCol(rows[i][1]), 13, 'center');
+      btext(rows[i][2], gx+128, y, 0.9, '#dfefff','left',true); }
+  }
+  if(t>=1.5) jtext(rp.tip||'', VW/2, 196, '#ffe23c', 9, 'center');
+  if(t>=1.5) btext('DIFFICULTY: '+G.diffName+(isExRun()?' / EX OMEGA':''),VW/2,204,0.85,'#8fb0d0','center',true);
+  if(t>=2.0 && Math.floor(G.time*2)%2===0) btext('PRESS Z / TAP : TITLE',VW/2,222,1.1,'#e8f4ff','center',true);
+}
+
+/* ============================ カスタム画面 描画 ============================ */
+function layoutCustom(){
+  G.cardRects=[]; const cardW=80,cardH=40,gapX=4; const startX=23,rowY=[46,88];
+  for(let i=0;i<G.hand.length;i++){ const r=Math.floor(i/4),cI=i%4; G.cardRects.push({x:startX+cI*(cardW+gapX),y:rowY[r],w:cardW,h:cardH,i}); }
+  G.okRect={x:300,y:180,w:74,h:20};
+}
+/* チップ分類の日本語ラベル（情報パネル用） */
+function chipCatLabel(cat){
+  return ({shot:'ショット',blade:'ブレード',heal:'回復',area:'エリア',trap:'トラップ',wave:'ウェーブ',meteor:'メテオ',bomb:'ボム',back:'バックスラッシュ'})[cat]||cat;
+}
+/* チップ性能の要約テキスト（情報パネル用） */
+function chipStatText(def){
+  if(def.heal!=null) return 'HP回復 +'+def.heal;
+  if(def.hits) return '威力 '+def.dmg+' ×'+def.hits+'ヒット';
+  return '威力 '+def.dmg;
+}
+/* V11：カーソル中のチップ効果を常時表示する情報パネル。OK上では構成サマリを表示。 */
+function drawChipInfoPanel(sel,pa){
+  const X=16,Y=130,W=VW-32,H=46;
+  px(X,Y,W,H,'#0a1322'); pframe(X,Y,W,H,'#274a72',1);
+  const onCard=(G.cursor!==99 && G.cursor<G.hand.length);
+  if(onCard){
+    const h=G.hand[G.cursor], def=CHIPS[h.id];
+    chipIcon(X+6,Y+10,26,def);
+    const tx=X+42;
+    btext(def.id, tx, Y+5, 1.2, def.col, 'left', true);                 // 英名
+    const nw=btextWidth(def.id,1.2);
+    btext('['+h.code+']', tx+nw+8, Y+6, 1.0, '#ffe23c','left',true);    // コード
+    jtext(chipStatText(def), X+W-6, Y+12, '#ffe88a', 9, 'right');       // 威力/回復（右寄せ）
+    jtext(def.jp, tx, Y+27, '#ffffff', 11, 'left', 'bold');             // 和名
+    jtext(chipCatLabel(def.cat), X+W-6, Y+27, '#7fd0c0', 9, 'right');   // 分類（右寄せ）
+    jtext(def.desc, tx, Y+41, '#bfe3ff', 9, 'left');                    // 効果説明
+  } else {
+    btext('CONFIRM', X+10, Y+6, 1.3, '#7df0ff','left',true);
+    if(pa){
+      jtext('P.A.「'+pa.name+'」が発動します', X+12, Y+28, '#ff9ae0', 11, 'left','bold');
+      jtext('※選択した構成は必殺技に置き換わります', X+12, Y+41, '#c79ad8', 9, 'left');
+    } else if(sel.length===0){
+      jtext('チップ未選択 → バスターのみで出撃します', X+12, Y+28, '#bfe3ff', 11, 'left');
+      jtext('※バスターのみでも全クリア可能です', X+12, Y+41, '#9fb8d0', 9, 'left');
+    } else {
+      const cnt={}; for(const i of G.selected){ const id=G.hand[i].id; cnt[id]=(cnt[id]||0)+1; }
+      const maxSame=Math.max.apply(null, Object.values(cnt));
+      const parts=Object.keys(cnt).map(id=>CHIPS[id].jp+(cnt[id]>1?'×'+cnt[id]:''));
+      let info='内容：'+parts.join(' ／ '); if(info.length>30) info=info.slice(0,29)+'…';
+      jtext('選択 '+sel.length+'枚'+(maxSame>=2?'（COMBO：同名'+maxSame+'枚）':''), X+12, Y+28, '#bfe3ff', 11, 'left');
+      jtext(info, X+12, Y+41, '#9fc8e0', 9, 'left');
+    }
+  }
+}
+function drawCustom(){
+  drawBattleScene(true);
+  ctx.fillStyle='rgba(6,10,20,0.85)'; ctx.fillRect(0,0,VW,VH);
+  btext('CUSTOM SCREEN',VW/2,9,1.7,'#7df0ff','center',true);
+  layoutCustom();
+  // V10：P.A.可視化の中核。選択がP.A.か(pa)、手札にどんなP.A.機会があるか(hp)を先に解析。
+  const sel=selectedChips(); const pa=detectPA(sel); const hp=analyzeHandPA();
+  // 動的ヒント行（y=23〜）：P.A.成立中＞P.A.可能＞汎用ヒント の優先で1行表示
+  if(pa){
+    const blink=Math.floor(G.time*4)%2===0;
+    px(40,23,VW-80,13, blink?'#3a0a28':'#280720'); pframe(40,23,VW-80,13,'#ff5af0',1);
+    btext('P.A. READY   '+pa.name, VW/2, 25, 1.0, blink?'#ffd6f4':'#ff8ad8','center',true);
+  } else if(hp.list.length){
+    const names=hp.list.map(o=>o.name).slice(0,2).join(' / ');
+    jtext('P.A. 可能！ '+names+'（桃色 PA のチップを揃える）',VW/2,32,'#ff9ae0',9,'center');
+  } else {
+    jtext('同名2枚以上でCOMBO ／ 同名3枚 or BLADE+WIDE+LONG でP.A.',VW/2,32,'#9fb8d8',9,'center');
+  }
+  for(const cr of G.cardRects){
+    const h=G.hand[cr.i],def=CHIPS[h.id]; const sel2=G.selected.includes(cr.i);
+    const order=G.selected.indexOf(cr.i)+1; const addable=sel2||canAddIndex(cr.i);
+    px(cr.x-1,cr.y-1,cr.w+2,cr.h+2,'#0a0e18');
+    ctx.globalAlpha=addable?1:0.4;
+    px(cr.x,cr.y,cr.w,cr.h,sel2?'#23406a':'#14203a');
+    chipIcon(cr.x+5,cr.y+5,18,def);
+    btext(def.id,cr.x+27,cr.y+6,1,'#fff','left',true);
+    btext('['+h.code+']',cr.x+27,cr.y+17,1,'#ffe23c','left',true);
+    jtext(def.jp,cr.x+5,cr.y+36,'#bfe3ff',9);
+    ctx.globalAlpha=1;
+    if(sel2){ ctx.strokeStyle='#ffe23c'; ctx.lineWidth=2; ctx.strokeRect(cr.x,cr.y,cr.w,cr.h);
+      px(cr.x+cr.w-12,cr.y+2,11,11,'#ffe23c'); btext(''+order,cr.x+cr.w-9,cr.y+4,1,'#000','left',false); }
+    if(cr.i===G.cursor){ ctx.strokeStyle='#7df0ff'; ctx.lineWidth=1; ctx.strokeRect(cr.x-2,cr.y-2,cr.w+4,cr.h+4); }
+    // V10：P.A.関与チップに桃色「PA」タグ。現在の選択を完成させる一枚は点滅で最強調。
+    if(hp.cardSet.has(cr.i) && addable){
+      const completes = !pa && wouldCompletePA(cr.i);
+      const blink = completes && (Math.floor(G.time*5)%2===0);
+      const tx=cr.x+cr.w-19, ty=cr.y+cr.h-11;
+      px(tx,ty,17,10, completes?(blink?'#ff5af0':'#5a1040'):'#241026');
+      pframe(tx,ty,17,10, completes?(blink?'#ffd6f4':'#ff5af0'):'#a8407a', 1);
+      btext('PA', tx+4, ty+2, 0.85, completes?'#fff':'#ff9ae0','left',false);
+    }
+  }
+  // V11：カーソル位置のチップ効果を解説する情報パネル
+  drawChipInfoPanel(sel,pa);
+  btext('SEL',23,184,1,'#bfffe0','left',true);
+  let mx=52; for(const i of G.selected){ chipIcon(mx,180,14,CHIPS[G.hand[i].id]); mx+=18; }
+  if(G.selected.length===0){ jtext('チップ未選択（バスターのみで戦う）',52,189,'#88a8c8',9); }
+  btext(G.selected.length+'/5',250,184,1,'#fff','left',true);
+  const ok=G.okRect; const okCur=(G.cursor===99);
+  if(pa){
+    const blink=Math.floor(G.time*4)%2===0;
+    px(ok.x,ok.y,ok.w,ok.h, blink?'#a01a6a':'#7a1450');
+    ctx.strokeStyle=okCur?'#7df0ff':'#ff5af0'; ctx.lineWidth=2; ctx.strokeRect(ok.x,ok.y,ok.w,ok.h);
+    btext('P.A. OK',ok.x+ok.w/2,ok.y+7,1.0,'#ffffff','center',true);
+  } else {
+    px(ok.x,ok.y,ok.w,ok.h,'#1b6a3a'); ctx.strokeStyle=okCur?'#7df0ff':'#3ad06a'; ctx.lineWidth=okCur?2:1; ctx.strokeRect(ok.x,ok.y,ok.w,ok.h);
+    btext('OK [X]',ok.x+ok.w/2,ok.y+6,1.2,'#dfffe8','center',true);
+  }
+  jtext('Z：選択  ／  X：決定  ／  方向キー：カーソル',VW/2,212,'#7d96b0',9,'center');
+}
+/* ============================ メイン描画 ============================ */
+/* バトル上のオーバーレイ演出：FURY暗転 / PAカットイン（バトル進行は止めない） */
+function drawOverlayFx(){
+  if(SET.fx && G.furyT>0){
+    const lb=liveBoss(); const omega=lb&&lb.type==='omega';
+    const a = clamp(G.furyT/0.3, 0, 1);
+    ctx.globalAlpha = qa(a*0.55); ctx.fillStyle=omega?'#1a003a':'#3a0000'; ctx.fillRect(0,0,VW,VH); ctx.globalAlpha=1;
+    if(Math.floor(G.time*12)%2===0) btext(omega?'OVERLOAD':'FURY MODE', VW/2, VH/2-8, 2.4, omega?'#c79cff':'#ff8a3c', 'center', true);
+  }
+  if(G.cutin){
+    const k = G.cutin.t/G.cutin.life;
+    const fade = k<0.12 ? k/0.12 : (k>0.85 ? (1-k)/0.15 : 1); // 出入りフェード
+    const bandY = VH/2 - 18;
+    ctx.globalAlpha = qa(clamp(fade,0,1));
+    px(0, bandY, VW, 36, '#0a0e18');
+    px(0, bandY, VW, 2, G.cutin.col); px(0, bandY+34, VW, 2, G.cutin.col);
+    btext('PROGRAM ADVANCE', VW/2, bandY+9, 1.0, '#ff6ab0', 'center', true);
+    btext(G.cutin.name, VW/2, bandY+20, 1.8, G.cutin.col, 'center', true);
+    ctx.globalAlpha = 1;
+  }
+}
+function render(){
+  ctx.setTransform(RS,0,0,RS,0,0);   // 論理座標→高解像度バッキングへ写像（毎フレーム適用＝リサイズ後も保証）
+  ctx.clearRect(0,0,VW,VH);
+  switch(G.state){
+    case ST.TITLE: drawTitle(); break;
+    case ST.DIFFICULTY: drawDifficulty(); break;
+    case ST.HELP: drawHelp(); break;
+    case ST.LIBRARY: drawLibrary(); break;
+    case ST.CUSTOM: drawCustom(); break;
+    case ST.BATTLE:
+      drawBattleScene(false); drawOverlayFx();
+      // 着弾予告マーカーを最前面に（ダメージ数値/コンボ/カットイン/FURYより上）。揺れは本体と整合。
+      ctx.save(); ctx.translate(G._ox||0,G._oy||0); drawStrikeMarkers(); ctx.restore();
+      break;
+    case ST.RESULT: drawResult(); break;
+    case ST.GAMEOVER: drawGameOver(); break;
+    case ST.VICTORY:  drawVictory();  break;
+    case ST.ACHIEVE:  drawAchieve(); break;
+  }
+}
+/* 実績(メダル)一覧(P4)：未解放もゴール文言を表示して動機づけ。Z/B/タップでタイトルへ復帰。 */
+function drawAchieve(){
+  drawBG(false);
+  btext('ACHIEVEMENTS',VW/2,16,1.8,'#ffe23c','center',true);
+  jtext('実績 '+achCount()+' / '+ACHIEVEMENTS.length,VW/2,33,'#9fd0ff',9,'center');
+  const x0=26, startY=44, rowh=18;
+  for(let i=0;i<ACHIEVEMENTS.length;i++){
+    const a=ACHIEVEMENTS[i], got=!!ACH_DONE[a.id], y=startY+i*rowh;
+    px(x0-4,y-1,VW-2*(x0-4),rowh-2, got?'#10241a':'#0c1422');           // 行背景
+    px(x0,y+1,12,12, got?'#1f5a32':'#161e2a');                          // ステータスボックス
+    pframe(x0,y+1,12,12, got?'#7dff9a':'#2a3444',1);
+    if(got){ ctx.strokeStyle='#bfffce'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(x0+3,y+7); ctx.lineTo(x0+5,y+9); ctx.lineTo(x0+9,y+4); ctx.stroke(); }
+    else px(x0+4,y+6,4,2,'#3a4658');                                    // ロック＝灰スロット
+    btext(a.name, x0+20, y+2, 1.0, got?'#ffe23c':'#5a6a80','left',true);
+    jtext(a.desc, VW-22, y+9, got?'#bfe3ff':'#4f5e74', 8, 'right');
+  }
+  jtext('Z / B / タップでタイトルへ',VW/2,216,'#8fb0d0',8,'center');
+}
+
+/* ============================ ループ ============================ */
+let last=performance.now(), acc=0; const STEP=1/60;
+function frame(now){
+  let dt=(now-last)/1000; last=now; if(dt>0.25) dt=0.25;
+  G.time+=dt; G.stateT+=dt; acc+=dt;
+  while(acc>=STEP){
+    if(G.hitstop>0 && G.state===ST.BATTLE){ G.hitstop-=STEP; acc-=STEP; continue; }
+    if(G.state===ST.BATTLE) updateBattle(STEP);
+    else if(G.state===ST.RESULT){
+      if(G.stateT>1.6 && G.stateT<1.62){} // hold; advance on input or after long delay below
+      if(G.stateT>4.0){ advanceAfterResult(); }
+    }
+    acc-=STEP;
+  }
+  bgmSchedule();
+  render();
+  requestAnimationFrame(frame);
+}
+function advanceAfterResult(){
+  if(G.wave>=G.finalWave){ enterVictory(); } // 通常はここに到達しない（保険）
+  else startWave(G.wave+1);
+}
+
+/* ============================ 入力：キーボード ============================ */
+const KD={ 'arrowup':'up','w':'up','arrowdown':'down','s':'down','arrowleft':'left','a':'left','arrowright':'right','d':'right' };
+window.addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase(); initAudio();
+  if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault();
+  if(e.repeat) return;                  // 押しっぱなしのオートリピートで誤確定/多重発火しない(C-3)
+  if(k==='m'){ toggleMute(); return; }
+  if(k==='f'){ toggleFx(); return; }   // 画面エフェクト ON/OFF
+  if(k==='v'){ cycleShake(); return; } // シェイク強度 強/弱/なし
+  if(G.state===ST.TITLE){
+    if(k==='z'||k==='enter'||k===' '){ G.state=ST.DIFFICULTY; G.stateT=0; return; }
+    if(k==='x'){ G.state=ST.LIBRARY; G.stateT=0; G.libCursor=0; beep(720,0.06); return; }
+    if(k==='c'){ G.state=ST.ACHIEVE; G.stateT=0; beep(720,0.06); return; }   // 実績一覧(P4)
+    return;
+  }
+  if(G.state===ST.LIBRARY){
+    if(KD[k]){ const d=KD[k]; let c=G.libCursor; const cols=libCols(), n=Object.keys(CHIPS).length;
+      if(d==='left'&&c%cols>0) c--; else if(d==='right'&&(c%cols)<cols-1&&c+1<n) c++;
+      else if(d==='up'&&c-cols>=0) c-=cols; else if(d==='down'&&c+cols<n) c+=cols;
+      G.libCursor=c; beep(620,0.03); return; }
+    if(k==='z'||k==='enter'||k===' '||k==='x'||k==='c'||k==='escape'){ clearNewly(); G.state=ST.TITLE; G.stateT=0; beep(520,0.06); }
+    return;
+  }
+  if(G.state===ST.ACHIEVE){
+    if(k==='z'||k==='enter'||k===' '||k==='x'||k==='c'||k==='escape'){ G.state=ST.TITLE; G.stateT=0; beep(520,0.06); }
+    return;
+  }
+  if(G.state===ST.DIFFICULTY){
+    if(k==='arrowup'||k==='w'||k==='arrowleft'||k==='a'){ G.diffIndex=(G.diffIndex+2)%3; beep(640,0.04); return; }
+    if(k==='arrowdown'||k==='s'||k==='arrowright'||k==='d'){ G.diffIndex=(G.diffIndex+1)%3; beep(640,0.04); return; }
+    if(k==='e'){ if(EX_UNLOCKED){ G.exMode=!G.exMode; beep(G.exMode?960:520,0.06); beep(G.exMode?1240:380,0.05); } else beep(200,0.1,'square'); return; }
+    if(k==='z'||k==='enter'||k===' '){ chooseDifficulty(); } return;
+  }
+  if(G.state===ST.HELP){ if(k==='z'||k==='enter'||k===' '){ startGame(); } return; }
+  // 結果系：表示直後の誤入力を防ぐため 0.4 秒は確定操作をロック(C-3)
+  if(G.state===ST.GAMEOVER){ if((k==='z'||k==='enter'||k===' ')&&G.stateT>=0.4){ retryWave(); } return; }
+  if(G.state===ST.VICTORY){ if((k==='z'||k==='enter'||k===' ')&&G.stateT>=0.4){ G.state=ST.TITLE; G.stateT=0; } return; }
+  if(G.state===ST.RESULT){ if((k==='z'||k==='enter'||k===' ')&&G.stateT>=0.4){ advanceAfterResult(); } return; }
+  if(G.state===ST.CUSTOM){
+    if(KD[k]){ moveCursor(KD[k]); return; }
+    if(k==='z'||k==='enter'){ if(G.cursor===99) confirmCustom(); else toggleSelect(G.cursor); return; }
+    if(k==='x'||k==='c'){ confirmCustom(); return; }
+    return;
+  }
+  if(G.state===ST.BATTLE){
+    if(KD[k]){ held[KD[k]]=true; return; }
+    if(k==='z'){ busterPress(); return; }
+    if(k==='x'){ useNextChip(); return; }
+    if((k==='c'||k==='enter') && G.customReady){ enterCustom(false); return; }
+  }
+});
+window.addEventListener('keyup',e=>{ const k=e.key.toLowerCase(); if(KD[k]) held[KD[k]]=false; if(k==='z') busterRelease(); });
+window.addEventListener('blur',()=>{ held.up=held.down=held.left=held.right=false; busterDown=false; G.p.charging=false; G.p.charge=0; });
+
+function diffMove(dir){ if(dir==='up'||dir==='left') G.diffIndex=(G.diffIndex+2)%3; else if(dir==='down'||dir==='right') G.diffIndex=(G.diffIndex+1)%3; beep(640,0.04); }
+function moveCursor(dir){
+  let c=G.cursor;
+  if(c===99){ if(dir==='up'||dir==='left'){ c=7; } G.cursor=c; return; }
+  const r=Math.floor(c/4),col=c%4;
+  if(dir==='left'){ if(col>0) c-=1; }
+  else if(dir==='right'){ if(col<3) c+=1; }
+  else if(dir==='up'){ if(r>0) c-=4; }
+  else if(dir==='down'){ if(r===0) c+=4; else c=99; }
+  if(c>=G.hand.length && c!==99) c=99;
+  G.cursor=c;
+}
+
+/* ============================ 入力：タッチ ============================ */
+document.querySelectorAll('[data-dir]').forEach(btn=>{
+  const dir=btn.getAttribute('data-dir');
+  const on=e=>{ e.preventDefault(); initAudio(); if(G.state===ST.DIFFICULTY){ diffMove(dir); return; } if(G.state===ST.CUSTOM){ moveCursor(dir); return; } held[dir]=true; btn.classList.add('on'); };
+  const off=e=>{ e.preventDefault(); held[dir]=false; btn.classList.remove('on'); };
+  btn.addEventListener('pointerdown',on); btn.addEventListener('pointerup',off);
+  btn.addEventListener('pointerleave',off); btn.addEventListener('pointercancel',off);
+});
+function actHandler(act){
+  initAudio();
+  if(G.state===ST.LIBRARY){ clearNewly(); G.state=ST.TITLE; G.stateT=0; beep(520,0.06); return; } // 図鑑→タイトル（どのボタンでも）
+  if(G.state===ST.ACHIEVE){ G.state=ST.TITLE; G.stateT=0; beep(520,0.06); return; } // 実績→タイトル（どのボタンでも）(P4)
+  const rLock = G.stateT<0.4; // 結果系の誤入力ロック
+  if(act==='buster'){
+    if(G.state===ST.TITLE){ G.state=ST.DIFFICULTY; G.stateT=0; return; }
+    if(G.state===ST.DIFFICULTY){ chooseDifficulty(); return; }
+    if(G.state===ST.HELP){ startGame(); return; }
+    if(G.state===ST.GAMEOVER){ if(!rLock) retryWave(); return; }
+    if(G.state===ST.VICTORY){ if(!rLock){ G.state=ST.TITLE; G.stateT=0; } return; }
+    if(G.state===ST.RESULT){ if(!rLock) advanceAfterResult(); return; }
+    if(G.state===ST.CUSTOM){ if(G.cursor===99) confirmCustom(); else toggleSelect(G.cursor); return; }
+    busterPress();
+  } else if(act==='chip'){
+    if(G.state===ST.TITLE){ G.state=ST.LIBRARY; G.stateT=0; G.libCursor=0; beep(720,0.06); return; } // タイトルで図鑑を開く
+    if(G.state===ST.CUSTOM){ confirmCustom(); return; }
+    useNextChip();
+  } else if(act==='cust'){
+    if(G.state===ST.BATTLE && G.customReady){ enterCustom(false); return; }
+    if(G.state===ST.CUSTOM){ confirmCustom(); return; }
+    if(G.state===ST.TITLE){ G.state=ST.ACHIEVE; G.stateT=0; beep(720,0.06); return; }   // タイトルで実績を開く(P4)
+    if(G.state===ST.DIFFICULTY){ chooseDifficulty(); return; }
+    if(G.state===ST.HELP){ startGame(); return; }
+    if(G.state===ST.GAMEOVER){ if(!rLock) retryWave(); return; }
+    if(G.state===ST.VICTORY){ if(!rLock){ G.state=ST.TITLE; G.stateT=0; } return; }
+    if(G.state===ST.RESULT){ if(!rLock) advanceAfterResult(); return; }
+  }
+}
+document.querySelectorAll('[data-act]').forEach(btn=>{
+  const act=btn.getAttribute('data-act');
+  btn.addEventListener('pointerdown',e=>{ e.preventDefault(); initAudio(); btn.classList.add('on'); actHandler(act); });
+  const rel=e=>{ e.preventDefault(); btn.classList.remove('on'); if(act==='buster') busterRelease(); };
+  btn.addEventListener('pointerup',rel); btn.addEventListener('pointerleave',rel); btn.addEventListener('pointercancel',rel);
+});
+cv.addEventListener('pointerdown',e=>{
+  initAudio();
+  const rect=cv.getBoundingClientRect(); const sx=VW/rect.width,sy=VH/rect.height;
+  const x=(e.clientX-rect.left)*sx,y=(e.clientY-rect.top)*sy;
+  const rLock = G.stateT<0.4;
+  if(G.state===ST.LIBRARY){
+    for(const cell of libCellRects()){ if(x>=cell.x&&x<=cell.x+cell.w&&y>=cell.y&&y<=cell.y+cell.h){ G.libCursor=cell.i; beep(620,0.03); return; } }
+    clearNewly(); G.state=ST.TITLE; G.stateT=0; beep(520,0.06); return; // セル外タップで戻る
+  }
+  if(G.state===ST.ACHIEVE){ G.state=ST.TITLE; G.stateT=0; beep(520,0.06); return; } // 実績→タイトル(タップ)(P4)
+  if(G.state===ST.TITLE){ G.state=ST.DIFFICULTY; G.stateT=0; return; }
+  if(G.state===ST.DIFFICULTY){
+    const er=exRect();
+    if(x>=er.x&&x<=er.x+er.w&&y>=er.y&&y<=er.y+er.h){ // EXトグルは選択せずON/OFFのみ
+      if(EX_UNLOCKED){ G.exMode=!G.exMode; beep(G.exMode?960:520,0.06); beep(G.exMode?1240:380,0.05); } else beep(200,0.1,'square'); return; }
+    const rects=diffRects();
+    for(let i=0;i<rects.length;i++){ const r=rects[i]; if(x>=r.x-2&&x<=r.x+r.w+2&&y>=r.y-2&&y<=r.y+r.h+2){ G.diffIndex=i; chooseDifficulty(); return; } }
+    return;
+  }
+  if(G.state===ST.HELP){ startGame(); return; }
+  if(G.state===ST.GAMEOVER){ if(!rLock) retryWave(); return; }
+  if(G.state===ST.VICTORY){ if(!rLock){ G.state=ST.TITLE; G.stateT=0; } return; }
+  if(G.state===ST.RESULT){ if(!rLock) advanceAfterResult(); return; }
+  if(G.state===ST.CUSTOM){
+    for(const cr of G.cardRects){ if(x>=cr.x&&x<=cr.x+cr.w&&y>=cr.y&&y<=cr.y+cr.h){ G.cursor=cr.i; toggleSelect(cr.i); return; } }
+    const ok=G.okRect; if(ok&&x>=ok.x&&x<=ok.x+ok.w&&y>=ok.y&&y<=ok.y+ok.h){ confirmCustom(); return; }
+  }
+});
+
+/* ============================ 起動 ============================ */
+try{ const mb=document.getElementById('mute'); if(mb) mb.addEventListener('pointerdown',e=>{ e.preventDefault(); initAudio(); toggleMute(); }); }catch(e){}
+try{ const fb=document.getElementById('fxbtn'); if(fb) fb.addEventListener('pointerdown',e=>{ e.preventDefault(); initAudio(); toggleFx(); }); }catch(e){}
+try{ const sb=document.getElementById('shakebtn'); if(sb) sb.addEventListener('pointerdown',e=>{ e.preventDefault(); initAudio(); cycleShake(); }); }catch(e){}
+updateMuteBtn(); updateSetBtns(); // 保存済みの設定値をボタン表示へ反映
+fitCanvas();
+requestAnimationFrame(frame);
+
+})();
+</script>
+</body>
+</html>
