@@ -1,6 +1,6 @@
 # GRID NAVI BATTLE
 
-ロックマンエグゼ風のグリッド戦闘ゲームです。単一の HTML ファイルのみで動作し、外部ライブラリやビルド工程は不要です（Vanilla JavaScript + HTML Canvas）。
+グリッド戦闘ゲームです。単一の HTML ファイルのみで動作し、外部ライブラリやビルド工程は不要です（Vanilla JavaScript + HTML Canvas）。
 
 ## 遊び方
 
