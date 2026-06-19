@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>GRID NAVI BATTLE</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
@@ -28,12 +28,13 @@
     background:rgba(40,28,12,0.92); border:2px solid #b8923a; color:#ffd23c; border-radius:8px;
   }
   #titlebtn:active { background:#6a4a14; color:#fff; }
+  #readmebtn { color:#8fd0ff; border-color:#2f4a72; }
   #game {
     image-rendering:pixelated; image-rendering:crisp-edges;
     background:#04050a;
     border:2px solid #1b2b44;
     box-shadow:0 0 26px rgba(40,120,200,0.28);
-    display:block;
+    display:block; touch-action:none;
   }
   #pad { width:100%; display:flex; align-items:center; justify-content:space-between; gap:12px; }
   .cluster { display:flex; }
@@ -65,6 +66,7 @@
   <div id="topbar">
     <button id="fxbtn" type="button">FX:ON</button>
     <button id="shakebtn" type="button">SHAKE:STRONG</button>
+    <button id="readmebtn" type="button">README</button>
     <button id="mute" type="button">BGM: ON</button>
   </div>
   <canvas id="game" width="384" height="232"></canvas>
@@ -289,7 +291,8 @@ const CHIPS = {
   OVERDRIVE:{ id:'OVERDRIVE',jp:'オーバードライブ', dmg:32, cat:'wave',  col:'#ff8af0', desc:'行を貫通する衝撃波',     src:'実績報酬：EX OMEGA撃破', reward:true, req:'clearEX'  },
   DATABURST:{ id:'DATABURST',jp:'データバースト',   dmg:26, cat:'meteor',col:'#ff7a6a', desc:'敵マス最大4ヶ所に落下', src:'実績報酬：図鑑コンプ',    reward:true, req:'master'   }
 };
-const BASE_CHIP_IDS = Object.keys(CHIPS).filter(id=>!CHIPS[id].reward); // 図鑑対象＝基本チップのみ（報酬チップは除外）
+const BASE_CHIP_IDS = Object.keys(CHIPS).filter(id=>!CHIPS[id].reward); // コンプ判定の対象＝基本チップのみ
+const LIB_IDS = Object.keys(CHIPS); // 図鑑の表示対象（基本12＋報酬5）。コンプ条件はBASEのまま＝デッドロック回避
 function unlockedRewardChips(){ const out=[]; for(const id of Object.keys(CHIPS)){ const c=CHIPS[id]; if(c.reward && c.req && (typeof ACH_DONE!=='undefined') && ACH_DONE[c.req]){ out.push([id,'*']); out.push([id,'*']); } } return out; } // 解放済み報酬チップ×2をフォルダへ
 const BASE_FOLDER = [
   ['PULSE','A'],['PULSE','B'],['PULSE','C'],['PULSE','A'],
@@ -336,7 +339,7 @@ const G={
   bustRank:'-', report:null,         // バスティングランク文字 / 内訳レポートオブジェクト
   libCursor:0,                       // 図鑑のカーソル位置(閲覧中のチップ)
   _ox:0, _oy:0,                      // 当該フレームの画面揺れオフセット(予告マーカーの整合用)
-  reward:null, _chipCd:0, _newAch:[]
+  reward:null, _chipCd:0, _newAch:[], titleSel:0
 };
 const held={ up:false,down:false,left:false,right:false };
 let busterDown=false;
@@ -389,6 +392,7 @@ function unlockAch(id){ if(id && !ACH_DONE[id]){ ACH_DONE[id]=true; saveAll(); i
 function saveAll(){ try{ localStorage.setItem(SAVE_KEY, JSON.stringify({best:BEST_TABLE,rank:RANK_TABLE,bestEx:BEST_EX,rankEx:RANK_EX,disc:DISCOVERED,newly:NEWLY,ach:ACH_DONE,ex:EX_UNLOCKED,set:{fx:SET.fx,shake:SET.shake}})); }catch(e){} }
 function discover(id){ if(id && !DISCOVERED[id]){ DISCOVERED[id]=true; NEWLY[id]=true; saveAll(); if(libComplete()) unlockAch('master'); } } // 図鑑コンプで実績(P4)
 function libCount(){ let n=0; for(const id of BASE_CHIP_IDS) if(DISCOVERED[id]) n++; return n; }
+function chipKnown(id){ const c=CHIPS[id]; return c.reward ? !!ACH_DONE[c.req] : !!DISCOVERED[id]; } // 図鑑表示：報酬チップは実績解放で入手扱い
 function libComplete(){ return libCount()>=BASE_CHIP_IDS.length; }
 function clearNewly(){ let ch=false; for(const id in NEWLY){ delete NEWLY[id]; ch=true; } if(ch) saveAll(); } // 図鑑確認で「NEW!」を消す
 /* 演出設定ヘルパ：fxがOFFなら停止系を全て無効化（全機能は通常動作） */
@@ -1670,6 +1674,33 @@ function drawBattleScene(faded){
 function isBossType_live(){ return !!liveBoss(); } // ボス戦か(背景・残響演出の切替に使用)
 
 /* ============================ 画面 ============================ */
+function libMove(dir){
+  let c=G.libCursor; const cols=libCols(), n=LIB_IDS.length;
+  if(dir==='left'&&c%cols>0) c--;
+  else if(dir==='right'&&(c%cols)<cols-1&&c+1<n) c++;
+  else if(dir==='up'&&c-cols>=0) c-=cols;
+  else if(dir==='down'&&c+cols<n) c+=cols;
+  G.libCursor=c; beep(620,0.03);
+}
+function titleBtnRects(){
+  const w=92,h=24,gap=10,total=w*3+gap*2,x0=(VW-total)/2,y=120;
+  return { start:{x:x0,y:y,w:w,h:h}, lib:{x:x0+w+gap,y:y,w:w,h:h}, ach:{x:x0+(w+gap)*2,y:y,w:w,h:h} };
+}
+function drawTitleBtn(r,label,color,sel){
+  px(r.x,r.y,r.w,r.h, sel?'#23425f':'#0e1d33');
+  pframe(r.x,r.y,r.w,r.h, color, sel?2:1);
+  if(sel) pframe(r.x-2,r.y-2,r.w+4,r.h+4, color, 1);   // 選択中は二重枠で強調
+  jtext(label, r.x+r.w/2, r.y+r.h/2+4, sel?'#ffffff':color, 11, 'center');
+}
+function titleMove(dir){ const n=3; let t=G.titleSel||0;
+  if(dir==='left'||dir==='up') t=(t+n-1)%n; else if(dir==='right'||dir==='down') t=(t+1)%n;
+  G.titleSel=t; beep(640,0.04);
+}
+function titleSelect(i){
+  if(i===1){ G.state=ST.LIBRARY; G.stateT=0; G.libCursor=0; beep(720,0.06); }
+  else if(i===2){ G.state=ST.ACHIEVE; G.stateT=0; beep(720,0.06); }
+  else { G.state=ST.DIFFICULTY; G.stateT=0; beep(720,0.06); }
+}
 function drawTitle(){
   drawBG(false);
   btext('GRID NAVI',VW/2,26,3,'#7df0ff','center',true);
@@ -1678,61 +1709,68 @@ function drawTitle(){
   // 解放状況バッジ
   if(EX_UNLOCKED && Math.floor(G.time*2)%2===0) btext('* EX MODE AVAILABLE *',VW/2,96,0.9,'#c79cff','center',true);
   if(libComplete()) btext('* DATA MASTER *',VW/2,106,0.85,'#ffe23c','center',true);
-  if(Math.floor(G.time*2)%2===0) btext('PRESS Z / TAP TO START',VW/2,120,1.2,'#ffe23c','center',true);
-  let yy=138;
+  // タップ可能なメニュー（スマホでも操作先が明確）
+  const tbtn=titleBtnRects(); const ts=G.titleSel||0;
+  drawTitleBtn(tbtn.start,'スタート','#7dff9a',ts===0);
+  drawTitleBtn(tbtn.lib,'図鑑','#5cf0ff',ts===1);
+  drawTitleBtn(tbtn.ach,'実績','#ffe23c',ts===2);
+  let yy=156;
   btext('BEST  E '+BEST_TABLE.EASY+'  N '+BEST_TABLE.NORMAL+'  H '+BEST_TABLE.HARD,VW/2,yy,0.78,'#9fd0ff','center',true); yy+=11;
   btext('RANK  E '+RANK_TABLE.EASY+'  N '+RANK_TABLE.NORMAL+'  H '+RANK_TABLE.HARD,VW/2,yy,0.78,'#9fd0ff','center',true); yy+=11;
   if(EX_UNLOCKED){ btext('EX    E '+BEST_EX.EASY+'  N '+BEST_EX.NORMAL+'  H '+BEST_EX.HARD,VW/2,yy,0.78,'#c79cff','center',true); yy+=11; } // EX別枠ベスト(P2)
   jtext('実績 '+achCount()+'/'+ACHIEVEMENTS.length+'   図鑑 '+libCount()+'/'+BASE_CHIP_IDS.length,VW/2,yy+1,'#9fd0ff',8,'center'); yy+=13;
-  jtext('X=図鑑  C=実績  M=BGM  F=演出  V=シェイク',VW/2,yy,'#8fb0d0',8,'center'); yy+=12;
+  jtext('PC: X=図鑑 C=実績 M=BGM F=演出 V=シェイク',VW/2,yy,'#8fb0d0',8,'center'); yy+=12;
   jtext('FX:'+(SET.fx?'ON':'OFF')+'  SHAKE:'+shakeLabel()+'  BGM:'+(muted?'OFF':'ON'),VW/2,yy,'#5a90c0',8,'center');
 }
 /* チップ図鑑(P4)：入手済みは色付き、未入手はシルエット。
    カーソルで1枚を選ぶと下部に説明文・入手元・NEW!を表示。全12種コンプリートで金枠＋称号。 */
-function libCols(){ return 4; }
+function libCols(){ return 5; }
 function libCellRects(){
-  const ids=BASE_CHIP_IDS, cols=libCols(), out=[];
-  for(let i=0;i<ids.length;i++){ const c=i%cols, rw=(i/cols)|0; const cx=48+c*96, top=52+rw*44;
-    out.push({i,id:ids[i],cx,top,x:cx-16,y:top-3,w:32,h:42}); }
+  const ids=LIB_IDS, cols=libCols(), out=[];
+  for(let i=0;i<ids.length;i++){ const c=i%cols, rw=(i/cols)|0; const cx=40+c*76, top=50+rw*34;
+    out.push({i,id:ids[i],cx,top,x:cx-37,y:top-4,w:74,h:36}); }
   return out;
 }
 function drawLibrary(){
   drawBG(false);
-  const ids=BASE_CHIP_IDS; const total=ids.length; const got=libCount(); const complete=libComplete();
-  if(complete){ pframe(2,2,VW-4,VH-4,'#ffe23c',2); pframe(5,5,VW-10,VH-10,'#7a5a10',2); } // コンプリート金枠
-  btext('CHIP LIBRARY',VW/2,14,2,'#7df0ff','center',true);
-  if(complete && Math.floor(G.time*3)%2===0) btext('* DATA MASTER  '+got+'/'+total+' COMPLETE *',VW/2,36,0.95,'#ffe23c','center',true);
-  else btext(got+' / '+total+' DISCOVERED',VW/2,36,1,'#9fd0ff','center',true);
+  const ids=LIB_IDS, total=ids.length;
+  const baseTotal=BASE_CHIP_IDS.length, baseGot=libCount(), complete=libComplete();
+  let rewTotal=0, rewGot=0; for(const id of ids){ if(CHIPS[id].reward){ rewTotal++; if(chipKnown(id)) rewGot++; } }
+  if(complete){ pframe(2,2,VW-4,VH-4,'#ffe23c',2); pframe(5,5,VW-10,VH-10,'#7a5a10',2); } // コンプ金枠（基本12達成）
+  btext('CHIP LIBRARY',VW/2,12,1.8,'#7df0ff','center',true);
+  if(complete && Math.floor(G.time*3)%2===0)
+    jtext('★ DATA MASTER  図鑑 '+baseGot+'/'+baseTotal+'  ・  報酬 '+rewGot+'/'+rewTotal, VW/2, 33, '#ffe23c', 9, 'center');
+  else
+    jtext('図鑑 '+baseGot+'/'+baseTotal+'  ・  報酬 '+rewGot+'/'+rewTotal, VW/2, 33, '#9fd0ff', 9, 'center');
   const cells=libCellRects();
   if(G.libCursor<0) G.libCursor=0; if(G.libCursor>=total) G.libCursor=total-1;
   for(const cell of cells){
-    const id=cell.id, def=CHIPS[id], cx=cell.cx, top=cell.top, sel=(cell.i===G.libCursor);
-    if(sel){ pframe(cx-15,top-2,30,40,'#7df0ff',1); }
-    if(DISCOVERED[id]){
+    const id=cell.id, def=CHIPS[id], cx=cell.cx, top=cell.top, sel=(cell.i===G.libCursor), known=chipKnown(id);
+    if(sel){ pframe(cx-37,top-4,74,36,'#7df0ff',1); }   // セル全体（アイコン＋和名）を囲む大きめカーソル
+    if(known){
       chipIcon(cx-9,top,18,def);
-      if(NEWLY[id] && Math.floor(G.time*4)%2===0){ px(cx+5,top-2,12,7,'#ff3a6a'); btext('N',cx+8,top-2,0.8,'#fff','left',false); } // NEW!バッジ
-      jtext(def.jp,cx,top+32, sel?'#ffffff':'#d4e6ff', 10,'center');   // 和名のみを1行で大きく表示（英名コードは下部の詳細パネルに集約し、ラベル同士の重なりを解消）
+      if(!def.reward && NEWLY[id] && Math.floor(G.time*4)%2===0){ px(cx+5,top-2,12,7,'#ff3a6a'); btext('N',cx+8,top-2,0.8,'#fff','left',false); }
+      jtext(def.jp,cx,top+27, sel?'#ffffff':(def.reward?'#ffe6a0':'#d4e6ff'), 8,'center'); // 報酬チップは淡い金で区別
     } else {
       px(cx-9,top,18,18,'#141c2c'); pframe(cx-9,top,18,18,'#2a3a54',1);
-      btext('?',cx,top+5,1.2,'#3e5070','center',true);
-      btext('???',cx,top+27,0.85,'#46587a','center',true);   // 「？」アイコンと和名表示位置に合わせて再配置（発見済みセルと縦位置を整合）
+      btext('?',cx,top+5,1.1,'#3e5070','center',true);
+      jtext('???',cx,top+27,'#46587a',8,'center');
     }
   }
   // 詳細パネル（選択中チップ）
-  const selId=ids[G.libCursor], selDef=CHIPS[selId];
-  px(14,184,VW-28,36,'#0a1322'); pframe(14,184,VW-28,36,'#274058',1);
-  if(DISCOVERED[selId]){
-    btext(selId,22,188,0.9,selDef.col,'left',true);
-    if(NEWLY[selId]){ px(22+btextWidth(selId,0.9)+6,188,16,8,'#ff3a6a'); btext('NEW',22+btextWidth(selId,0.9)+8,188,0.7,'#fff','left',false); }
-    jtext(selDef.jp+' ／ '+selDef.desc, 22, 204, '#cfe3ff', 9);
-    jtext('入手元: '+(selDef.src||'—'), 22, 215, '#8fb0d0', 8);
+  const selId=ids[G.libCursor], selDef=CHIPS[selId], selKnown=chipKnown(selId);
+  px(14,186,VW-28,34,'#0a1322'); pframe(14,186,VW-28,34,'#274058',1);
+  if(selKnown){
+    btext(selId,22,189,0.9,selDef.col,'left',true);
+    if(!selDef.reward && NEWLY[selId]){ px(22+btextWidth(selId,0.9)+6,189,16,8,'#ff3a6a'); btext('NEW',22+btextWidth(selId,0.9)+8,189,0.7,'#fff','left',false); }
+    jtext(selDef.jp+' ／ '+selDef.desc, 22, 203, '#cfe3ff', 9);
+    jtext('入手元: '+(selDef.src||'—'), 22, 214, '#8fb0d0', 8);
   } else {
-    btext('???',22,188,0.9,'#5a7090','left',true);
-    jtext('未入手 ／ ウェーブをクリアすると入手できます', 22, 205, '#6f8aa8', 9);
+    btext('???',22,189,0.9,'#5a7090','left',true);
+    jtext(selDef.reward ? '未入手 ／ 対応する実績で解放されます' : '未入手 ／ ウェーブをクリアすると入手できます', 22, 205, '#6f8aa8', 9);
   }
   if(Math.floor(G.time*2)%2===0) jtext('方向キー/タップ=選択 ・ Z/B=タイトルへ',VW/2,228,'#e8f4ff',9,'center');
-}
-const DIFF_DESC={
+}const DIFF_DESC={
   EASY:'攻撃ゆるめ・弾速おそめ・予告長め',
   NORMAL:'標準的な歯ごたえ',
   HARD:'手数多め・弾速はやめ・予告短め'
@@ -2080,16 +2118,14 @@ window.addEventListener('keydown',e=>{
   if(k==='v'){ cycleShake(); return; } // シェイク強度 強/弱/なし
   if(k==='escape' && G.state!==ST.TITLE){ clearNewly(); G.state=ST.TITLE; G.stateT=0; beep(520,0.06); return; } // どの画面からもタイトルへ
   if(G.state===ST.TITLE){
-    if(k==='z'||k==='enter'||k===' '){ G.state=ST.DIFFICULTY; G.stateT=0; return; }
+    if(KD[k]){ titleMove(KD[k]); return; }
+    if(k==='z'||k==='enter'||k===' '){ titleSelect(G.titleSel||0); return; }
     if(k==='x'){ G.state=ST.LIBRARY; G.stateT=0; G.libCursor=0; beep(720,0.06); return; }
     if(k==='c'){ G.state=ST.ACHIEVE; G.stateT=0; beep(720,0.06); return; }   // 実績一覧(P4)
     return;
   }
   if(G.state===ST.LIBRARY){
-    if(KD[k]){ const d=KD[k]; let c=G.libCursor; const cols=libCols(), n=BASE_CHIP_IDS.length;
-      if(d==='left'&&c%cols>0) c--; else if(d==='right'&&(c%cols)<cols-1&&c+1<n) c++;
-      else if(d==='up'&&c-cols>=0) c-=cols; else if(d==='down'&&c+cols<n) c+=cols;
-      G.libCursor=c; beep(620,0.03); return; }
+    if(KD[k]){ libMove(KD[k]); return; }
     if(k==='z'||k==='enter'||k===' '||k==='x'||k==='c'||k==='escape'){ clearNewly(); G.state=ST.TITLE; G.stateT=0; beep(520,0.06); }
     return;
   }
@@ -2123,6 +2159,7 @@ window.addEventListener('keydown',e=>{
 });
 window.addEventListener('keyup',e=>{ const k=e.key.toLowerCase(); if(KD[k]) held[KD[k]]=false; if(k==='z') busterRelease(); });
 window.addEventListener('blur',()=>{ held.up=held.down=held.left=held.right=false; busterDown=false; G.p.charging=false; G.p.charge=0; });
+window.addEventListener('contextmenu',function(e){ e.preventDefault(); if(G.state!==ST.TITLE){ clearNewly(); G.state=ST.TITLE; G.stateT=0; beep(520,0.06); } }); // 右クリックでタイトルへ戻る
 
 function diffMove(dir){ if(dir==='up'||dir==='left') G.diffIndex=(G.diffIndex+2)%3; else if(dir==='down'||dir==='right') G.diffIndex=(G.diffIndex+1)%3; beep(640,0.04); }
 function moveCursor(dir){
@@ -2140,7 +2177,7 @@ function moveCursor(dir){
 /* ============================ 入力：タッチ ============================ */
 document.querySelectorAll('[data-dir]').forEach(btn=>{
   const dir=btn.getAttribute('data-dir');
-  const on=e=>{ e.preventDefault(); initAudio(); if(G.state===ST.DIFFICULTY){ diffMove(dir); return; } if(G.state===ST.CUSTOM){ moveCursor(dir); return; } held[dir]=true; btn.classList.add('on'); };
+  const on=e=>{ e.preventDefault(); initAudio(); if(G.state===ST.TITLE){ titleMove(dir); return; } if(G.state===ST.DIFFICULTY){ diffMove(dir); return; } if(G.state===ST.LIBRARY){ libMove(dir); return; } if(G.state===ST.CUSTOM){ moveCursor(dir); return; } held[dir]=true; btn.classList.add('on'); };
   const off=e=>{ e.preventDefault(); held[dir]=false; btn.classList.remove('on'); };
   btn.addEventListener('pointerdown',on); btn.addEventListener('pointerup',off);
   btn.addEventListener('pointerleave',off); btn.addEventListener('pointercancel',off);
@@ -2151,7 +2188,7 @@ function actHandler(act){
   if(G.state===ST.ACHIEVE){ G.state=ST.TITLE; G.stateT=0; beep(520,0.06); return; } // 実績→タイトル（どのボタンでも）(P4)
   const rLock = G.stateT<0.4; // 結果系の誤入力ロック
   if(act==='buster'){
-    if(G.state===ST.TITLE){ G.state=ST.DIFFICULTY; G.stateT=0; return; }
+    if(G.state===ST.TITLE){ titleSelect(G.titleSel||0); return; }
     if(G.state===ST.DIFFICULTY){ chooseDifficulty(); return; }
     if(G.state===ST.HELP){ startGame(); return; }
     if(G.state===ST.GAMEOVER){ if(!rLock) retryWave(); return; }
@@ -2190,7 +2227,11 @@ cv.addEventListener('pointerdown',e=>{
     clearNewly(); G.state=ST.TITLE; G.stateT=0; beep(520,0.06); return; // セル外タップで戻る
   }
   if(G.state===ST.ACHIEVE){ G.state=ST.TITLE; G.stateT=0; beep(520,0.06); return; } // 実績→タイトル(タップ)(P4)
-  if(G.state===ST.TITLE){ G.state=ST.DIFFICULTY; G.stateT=0; return; }
+  if(G.state===ST.TITLE){
+    const tb=titleBtnRects(); const hit=(r)=> x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h;
+    const i = hit(tb.lib)?1 : hit(tb.ach)?2 : 0;   // スタートボタン/余白=0
+    G.titleSel=i; titleSelect(i); return;
+  }
   if(G.state===ST.DIFFICULTY){
     const er=exRect();
     if(x>=er.x&&x<=er.x+er.w&&y>=er.y&&y<=er.y+er.h){ // EXトグルは選択せずON/OFFのみ
@@ -2214,17 +2255,23 @@ try{ const mb=document.getElementById('mute'); if(mb) mb.addEventListener('point
 try{ const fb=document.getElementById('fxbtn'); if(fb) fb.addEventListener('pointerdown',e=>{ e.preventDefault(); initAudio(); toggleFx(); }); }catch(e){}
 try{ const sb=document.getElementById('shakebtn'); if(sb) sb.addEventListener('pointerdown',e=>{ e.preventDefault(); initAudio(); cycleShake(); }); }catch(e){}
 try{ const tb=document.getElementById('titlebtn'); if(tb) tb.addEventListener('pointerdown',e=>{ e.preventDefault(); initAudio(); if(G.state!==ST.TITLE){ clearNewly(); G.state=ST.TITLE; G.stateT=0; beep(520,0.06); } }); }catch(e){}
+try{ const rb=document.getElementById('readmebtn'); if(rb) rb.addEventListener('pointerdown',e=>{ e.preventDefault();
+  let url='https://github.com/ai-zundamon/GRID-NAVI-BATTLE#readme'; // フォールバック
+  try{ const h=location.hostname, ps=location.pathname.split('/').filter(Boolean);
+    if(h.endsWith('.github.io') && ps.length>=1){ url='https://github.com/'+h.replace('.github.io','')+'/'+ps[0]+'#readme'; } }catch(_){}
+  window.open(url,'_blank','noopener'); }); }catch(e){}
 updateMuteBtn(); updateSetBtns(); // 保存済みの設定値をボタン表示へ反映
 
-/* iOS Safari は viewport の user-scalable=no / maximum-scale を無視するため、ズーム操作をJSで抑止（余白タップ等での拡大固定を防止） */
+/* ズーム完全抑止：iOSは viewport のズーム禁止を無視するため、ピンチ（gesture系＋2本指move）とダブルタップをJSで無効化。
+   ※ビューポートは user-scalable=no を付けず開いたままにし、ハードな拡大固定を避ける安全側構成 */
 ['gesturestart','gesturechange','gestureend'].forEach(function(ev){
   document.addEventListener(ev, function(e){ e.preventDefault(); }, {passive:false}); // ピンチズーム抑止
 });
-document.addEventListener('touchmove', function(e){ if(e.touches && e.touches.length>1) e.preventDefault(); }, {passive:false}); // 2本指操作抑止
+document.addEventListener('touchmove', function(e){ if(e.touches && e.touches.length>1) e.preventDefault(); }, {passive:false}); // 2本指ピンチの動き抑止（iOSで確実）
 var _lastTapEnd=0;
 document.addEventListener('touchend', function(e){
   var now=Date.now();
-  if(now-_lastTapEnd<=350) e.preventDefault(); // ダブルタップによるズーム抑止
+  if(now-_lastTapEnd<=350) e.preventDefault(); // ダブルタップ拡大抑止
   _lastTapEnd=now;
 }, {passive:false});
 
